@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anki Agent · Deck search</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+</head>
+<body>
+  <header class="topbar pywebview-drag-region">
+    <div class="brand">
+      <span class="logo">Ω</span>
+      <span class="title">Anki Agent</span>
+      <span class="deck-name" id="deck-name" title="Indexed deck" hidden></span>
+      <span class="sub" id="stats"></span>
+    </div>
+    <div class="mode-toggle pywebview-no-drag" role="tablist" aria-label="Retrieval mode">
+      <button class="mode-btn active" data-mode="fast" role="tab" aria-selected="true" title="Keyword/tag search over the deck (optionally AI-assisted)">
+        <span class="mode-dot"></span>Search
+        <span class="mode-sub">deck</span>
+      </button>
+      <button class="mode-btn" data-mode="tutor" role="tab" aria-selected="false" title="Multi-turn tutor that grounds its answers in your deck and cites the cards">
+        <span class="mode-dot"></span>Tutor
+        <span class="mode-sub">cited</span>
+      </button>
+    </div>
+  </header>
+
+  <section class="searchbar">
+    <form id="search-form" autocomplete="off">
+      <input
+        id="q"
+        type="search"
+        name="q"
+        placeholder="Search your deck…  try: keywords  ·  tag:Topic keyword  ·  &quot;exact phrase&quot;"
+        spellcheck="false"
+      />
+      <label class="ai-assist-toggle" id="ai-assist-label"
+             title="Let the AI turn a plain-English request into a tag/keyword search (e.g. 'high-yield cards on a topic')">
+        <input type="checkbox" id="ai-assist" />
+        <span>AI assist</span>
+      </label>
+      <label class="ai-assist-toggle" id="deep-label"
+             title="Deep AI search: pool candidates, then read and screen each card for a precise match. Asks you to narrow broad searches first (slower, more thorough).">
+        <input type="checkbox" id="deep-search" />
+        <span>Deep</span>
+      </label>
+      <button type="submit">Search</button>
+    </form>
+    <div id="deck-pill" class="deck-pill" hidden></div>
+    <div id="active-tags" class="active-tags"></div>
+    <div id="assist-plan" class="assist-plan" hidden></div>
+    <div id="hint" class="hint">
+      <kbd>/</kbd> focus &nbsp; <kbd>Esc</kbd> clear &nbsp;
+      Operators: <code>tag:&lt;word&gt;</code> <code>guid:&lt;prefix&gt;</code>
+      <code>front:&lt;word&gt;</code> <code>back:&lt;word&gt;</code>
+    </div>
+  </section>
+
+  <main>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section" id="deck-section" hidden>
+        <h3>Decks</h3>
+        <div id="deck-tree" class="deck-tree"></div>
+      </div>
+      <h3>Top tags</h3>
+      <div id="sidebar-tags" class="tag-list"></div>
+    </aside>
+
+    <section class="results-panel">
+      <div class="results-header">
+        <span id="result-count"></span>
+        <span class="results-header-right">
+          <button id="copy-all-ids" class="copy-all-ids" type="button" hidden
+                  title="Copy every result's note ID as an Anki search (nid:1,2,3) — paste into the Anki browser to list them all">
+            Copy all IDs
+          </button>
+          <span id="result-timing"></span>
+        </span>
+      </div>
+      <div id="results" class="results"></div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='marked.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+flask>=3.0
+groq>=0.11
+openai>=1.40
+python-dotenv>=1.0
+bleach>=6.1
+pywebview>=5.0
+pyobjc-core>=10.0
+pynput>=1.7
