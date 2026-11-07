@@ -6,7 +6,7 @@ This page is for maintainers. People installing the app should use the **[Mac se
 
 - **Version:** 1.3.1, including the fix for the optional-shortcut crash after saving Setup.
 - **Prepared locally:** `dist/Anki-Agent-1.3.1-macOS-arm64-preview.dmg`, its app ZIP, and its JSON manifest.
-- **Architecture:** Apple silicon (`arm64`). No Intel download has been built or verified locally.
+- **Architecture:** Apple silicon (`arm64`).
 - **Signing:** the preview has an ad-hoc signature and is not notarized by Apple.
 - **Publication:** no GitHub release has been published yet. The README and Mac setup guide state this explicitly; update their availability text when publishing.
 
@@ -25,7 +25,7 @@ This page is for maintainers. People installing the app should use the **[Mac se
    ```
 
 4. In the release notes, identify **Apple silicon**, the macOS version actually tested, the preview's lack of Apple notarization, and the setup-save crash fix. Link the **[Mac setup guide](https://github.com/ajy25/anki-agent/blob/main/docs/MAC_SETUP.md)**. Check that this link exists on the published branch before using it.
-5. Update the download status in the root README, `docs/MAC_SETUP.md`, and this page. Link to the actual release or asset. Publish those docs and the source revision for the built app, then publish the release. Do not promise an Intel download until it has been built and tested.
+5. Update the download status in the root README, `docs/MAC_SETUP.md`, and this page. Link to the actual release or asset. Publish those docs and the source revision for the built app, then publish the release.
 6. Check the release while signed out, if the repository is intended to be public. Confirm that the `.dmg` is downloadable and that the setup-guide link works. Send users the release or setup-guide link, rather than GitHub's **Code → Download ZIP**.
 
 `dist/` is ignored by Git. Pushing the source code does **not** upload an installer. Attach the `.dmg` to a Release; do not commit API keys, `.env`, collections, or personal settings. A public download contains the app, not the maintainer's cards or credentials. Each recipient supplies their own key and deck.
@@ -43,7 +43,7 @@ python packaging/build_macos.py
 
 The output is a standalone `Anki Agent.app` inside a drag-to-Applications DMG, a ZIP of the app, and a JSON manifest containing the architecture, SHA-256 checksums, notarization status, and smoke-test results. Python, native WebKit support, UI assets, and inference dependencies are included. Anki collections, caches, `.env`, settings, and API keys are excluded.
 
-Build Apple silicon on arm64 and Intel on x86_64; do not rename an arm64 build as universal. The manual **Build Mac downloads** GitHub workflow is configured for both architectures and uploads preview artifacts. Workflow artifacts are build outputs, not a user-facing GitHub Release; inspect and test them, then attach the installers to a release.
+Build the Apple silicon app on an arm64 Mac; do not rename it as universal. The manual **Build Mac downloads** GitHub workflow uploads preview artifacts. Workflow artifacts are build outputs, not a user-facing GitHub Release; inspect and test them, then attach the installers to a release.
 
 The package smoke test runs the built executable with an empty data directory, checks setup routes and packaged assets, indexes a synthetic collection, changes the selected deck, and verifies the original collection is unchanged. It makes no model requests and uses an in-memory test credential rather than Keychain. Test actual first-open behavior and Keychain prompts separately on the intended Mac configurations.
 

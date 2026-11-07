@@ -14,16 +14,13 @@ Anki Agent uses the cards stored on **this Mac**. Signing in to AnkiWeb in a bro
 
 ## 1. Choose the right download
 
-To check which Mac you have, click ** → About This Mac** in the top-left corner of your screen. [Apple's guide](https://support.apple.com/en-us/116943) explains where to look.
+This download is for **Macs with Apple silicon** (Apple M-series chips). To check yours, click ** → About This Mac** in the top-left corner of your screen and look for **Chip: Apple M1, M2, M3**, or another Apple M-series chip. [Apple's guide](https://support.apple.com/en-us/116943) shows where to look.
 
-| What you see | Download to choose |
-| --- | --- |
-| **Chip: Apple M1, M2, M3**, or another Apple M-series chip | A Mac `.dmg` with **`arm64`** in its name. This means Apple silicon. |
-| **Processor: Intel…** | **No Intel installer is available.** The current preview cannot run on an Intel Mac. |
+Choose the Mac `.dmg` with **`arm64`** in its name; `arm64` means Apple silicon.
 
 Open the **[Anki Agent Downloads / Releases page](https://github.com/ajy25/anki-agent/releases)**. Select the newest release for your Mac and expand **Assets** if needed. Click the matching `.dmg` file.
 
-**Current availability:** an Apple silicon preview, **1.3.1**, has been built but is not yet published on GitHub. If you see no releases or no matching `.dmg`, ask the maintainer for the installer. The current file is `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`. There is no Intel download available here yet; Intel compatibility has not been verified.
+**Current availability:** an Apple silicon preview, **1.3.1**, has been built but is not yet published on GitHub. If you see no releases or no matching `.dmg`, ask the maintainer for the installer. The current file is `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`.
 
 The release notes should state which macOS versions have been tested. Do not assume every older Mac is supported.
 
@@ -126,7 +123,7 @@ Version **1.3.1** fixes a crash that could happen after saving Setup with the op
 | What you see | What to do |
 | --- | --- |
 | The Downloads / Releases page is empty | The installer has not been published yet. Ask the maintainer for the `.dmg`; downloading the source code will not install the app. |
-| The app is incompatible with your Mac | Check ** → About This Mac** and the download's `arm64` / `x86_64` name. Ask for a build tested on your Mac and macOS version. |
+| The app is incompatible with your Mac | Check ** → About This Mac**. This preview requires Apple silicon; check the release notes for tested macOS versions. Contact the maintainer if you need help. |
 | Groq did not accept the key | Copy your own Groq API key again, without spaces or quotation marks. If needed, create a new key, paste it into Setup, and click **Test key**. |
 | Could not reach Groq | Check your internet connection and try **Test key** again. If other websites work, try again later or check [Groq's service status](https://groqstatus.com/). |
 | No profiles, an empty deck list, or the wrong cards | Open Anki and check the profile and deck. Sync, then return to Setup, click **Refresh**, and choose that profile and deck. Use **Browse…** if needed. |

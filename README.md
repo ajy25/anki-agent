@@ -18,7 +18,7 @@ You will need:
 
 Open the [Downloads / Releases page](https://github.com/ajy25/anki-agent/releases). Under **Assets**, download the **Apple silicon (`arm64`) `.dmg`**. The current preview supports Apple silicon Macs only. Avoid **Source code (zip)** and **Source code (tar.gz)**; those are for developers.
 
-**Download status:** version **1.3.1** has been built locally for **Apple silicon** (`arm64`), but no GitHub release has been published yet. If the Releases page has no downloads, ask the maintainer for `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`. An Intel installer is not currently available here.
+**Download status:** version **1.3.1** has been built locally for **Apple silicon** (`arm64`), but no GitHub release has been published yet. If the Releases page has no downloads, ask the maintainer for `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`.
 
 Double-click the `.dmg`, drag **Anki Agent** onto **Applications**, then open **Anki Agent** from Applications.
 
