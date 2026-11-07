@@ -39,7 +39,7 @@ class SiteBuildTests(unittest.TestCase):
                 self.assertIsNone(site.select_download([item]))
 
     def test_pending_and_available_pages_build_with_valid_local_links(self):
-        for releases, text in (([], "first public Mac download is coming soon"),
+        for releases, text in (([], "View releases"),
                                ([release()], "Download for Mac")):
             with self.subTest(releases=bool(releases)), tempfile.TemporaryDirectory() as temporary:
                 site.build(Path(temporary), releases)

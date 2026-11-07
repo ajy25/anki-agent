@@ -1,6 +1,6 @@
 # GitHub Pages website
 
-The public site is **https://ajy25.github.io/anki-agent/**. It is a simple project page with a recording of the running app, download/setup instructions, and links to the changelog and source code.
+The public site is **https://ajy25.github.io/anki-agent/**. It contains the app name, a short note linking to Groq for fast inference, the app video, a download button, and links to the setup guide, changelog, and source code.
 
 ## Edit the site
 
@@ -29,6 +29,6 @@ The **Website** workflow builds and deploys changes to `site/`, `VERSION`, or it
 
 GitHub Pages must use **GitHub Actions** as its publishing source. The workflow uploads only `build/site`; app code, credentials, Anki data, and local installers are not part of the site. Pages deployment uses GitHub's temporary deployment token, without a personal token or custom domain.
 
-The builder reads GitHub's release metadata during deployment. It selects the newest published release with a matching Apple silicon DMG, including public pre-releases and excluding drafts. Before a public installer exists, it says the first download is coming soon and links to the Releases page. Once an installer is published, the site links directly to that asset. No GitHub API request or token is needed in a visitor's browser.
+The builder reads GitHub's release metadata during deployment. It selects the newest published release with a matching Apple silicon DMG, including public pre-releases and excluding drafts. Before a public installer exists, the button links to the Releases page. Once an installer is published, it links directly to that asset. No GitHub API request or token is needed in a visitor's browser.
 
 Website checks also run in CI for pull requests and pushes to `main`. They verify internal anchors, relative asset paths, demo media, and release selection. The site needs no client-side JavaScript; the demo uses the browser's standard video controls. The page uses relative paths so it works under GitHub Pages' `/anki-agent/` project path.

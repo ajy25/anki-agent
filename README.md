@@ -4,7 +4,7 @@
 
 Search your Anki cards and ask a tutor questions with links back to your deck.
 
-**[Visit the website](https://ajy25.github.io/anki-agent/)** for a recording of the app and Mac download/setup steps.
+**[Visit the website](https://ajy25.github.io/anki-agent/)** for the app demo, download, and setup guide.
 
 ## Install on a Mac
 

@@ -84,9 +84,6 @@ def build(output: Path, releases: list) -> None:
     values = {
         "__DOWNLOAD_URL__": download["url"] if download else RELEASES_URL,
         "__DOWNLOAD_LABEL__": "Download for Mac" if download else "View releases",
-        "__RELEASE_STATUS__": (f"Version {download['version']} is available. Bring your own deck and Groq key."
-                               if download else "The first public Mac download is coming soon. You can explore the source and setup guide today."),
-        "__VERSION__": download["version"] if download else (ROOT / "VERSION").read_text().strip(),
     }
     page = (output / "index.html").read_text()
     for key, value in values.items():

@@ -3,67 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Anki Agent for Mac: watch the app in use, download it, and follow the setup instructions.">
+  <meta name="description" content="Anki Agent for Mac. Watch the demo and download the app.">
   <title>Anki Agent</title>
   <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=minimal">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header>
     <div class="title"><img src="icon.svg" alt="" width="38" height="38"><h1>Anki Agent</h1></div>
-    <p>Search your Anki cards and ask a tutor questions about your deck.</p>
-    <nav aria-label="Page navigation">
-      <a href="#demo">Demo</a>
-      <a href="#download">Download &amp; setup</a>
-      <a href="https://github.com/ajy25/anki-agent/blob/main/CHANGELOG.md">Changelog</a>
-      <a href="https://github.com/ajy25/anki-agent">GitHub</a>
-    </nav>
+    <p class="provider">We use <a href="https://console.groq.com/">Groq</a> for its fast inference.</p>
   </header>
 
   <main id="main">
-    <section id="demo" aria-labelledby="demo-title">
-      <h2 id="demo-title">Demo</h2>
-      <p>A short recording of the running app: search, an inline card citation, and the Thinking panel.</p>
+    <section id="demo" aria-label="Demo">
       <video controls playsinline preload="metadata" poster="demo-poster.webp?v=citations" aria-label="Anki Agent app walkthrough">
         <source src="demo.mp4?v=citations" type="video/mp4">
         <track kind="captions" src="demo.vtt?v=citations" srclang="en" label="Walkthrough captions" default>
-        Your browser does not support embedded video. <a href="demo.mp4?v=citations">Download the walkthrough</a> instead.
+        <a href="demo.mp4?v=citations">Download the demo video</a>.
       </video>
-      <p class="caption">Recorded in the app’s browser interface using six original sample cards. The tutor response comes from Groq. No personal deck data is shown. No audio.</p>
-      <details>
-        <summary>What the video shows</summary>
-        <ol>
-          <li>Search the sample deck for “active recall” and see matching cards.</li>
-          <li>Switch to Tutor and ask how active recall differs from spaced repetition.</li>
-          <li>See the answer arrive with an inline [1] citation.</li>
-          <li>Click [1] to highlight the matching source card.</li>
-          <li>Open Thinking to inspect the returned reasoning and deck activity.</li>
-        </ol>
-      </details>
     </section>
-
-    <section id="download" aria-labelledby="download-title">
-      <h2 id="download-title">Download and setup</h2>
-      <p>For Macs with Apple silicon (Apple M-series chips). The app includes Python; you do not need Terminal or coding experience.</p>
-      <p id="release-status">__RELEASE_STATUS__</p>
-      <p><a class="download-link" href="__DOWNLOAD_URL__">__DOWNLOAD_LABEL__</a> <span class="version">Version __VERSION__ preview</span></p>
-      <ol class="setup-steps">
-        <li><strong>Have your Anki deck on this Mac.</strong> Open <a href="https://apps.ankiweb.net/">Anki</a> and finish syncing your cards.</li>
-        <li><strong>Install Anki Agent.</strong> Download the <strong>.dmg</strong> from the release’s <strong>Assets</strong>, open it, and drag <strong>Anki Agent</strong> into <strong>Applications</strong>. Open it from there. Use the app download, rather than “Source code”.</li>
-        <li><strong>Add your Groq key.</strong> <a href="https://console.groq.com/keys">Create your own API key</a>, paste it into <strong>Connect Groq</strong> in the app, and click <strong>Test key</strong>.</li>
-        <li><strong>Choose your cards.</strong> Select your Anki profile and deck, then click <strong>Save &amp; open deck</strong>. Leave the window open while the deck is prepared.</li>
-      </ol>
-      <p><a href="https://github.com/ajy25/anki-agent/blob/main/docs/MAC_SETUP.md">Full Mac setup guide and troubleshooting</a> — including what to do if macOS blocks the preview or your profile is missing.</p>
-      <p class="note">Your Anki collection stays read-only. Your key is saved in macOS Keychain. AI requests send your questions and relevant card text to Groq, using your account’s limits and billing settings.</p>
+    <section id="download" aria-label="Download">
+      <a class="download-link" href="__DOWNLOAD_URL__">__DOWNLOAD_LABEL__</a>
     </section>
   </main>
 
-  <footer>
-    <a href="https://github.com/ajy25/anki-agent">Source code</a>
+  <footer aria-label="Project links">
+    <a href="https://github.com/ajy25/anki-agent/blob/main/docs/MAC_SETUP.md">Setup guide</a>
     <a href="https://github.com/ajy25/anki-agent/blob/main/CHANGELOG.md">Changelog</a>
-    <a href="https://github.com/ajy25/anki-agent/issues">Get help</a>
-    <a href="https://github.com/ajy25/anki-agent/blob/main/LICENSE">MIT license</a>
+    <a href="https://github.com/ajy25/anki-agent">GitHub</a>
   </footer>
 </body>
 </html>
