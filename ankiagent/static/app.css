@@ -1,4 +1,6 @@
 /* Anki Agent — interface styles */
+.setup-settings { color: var(--text-dim); font-size: 13px; text-decoration: none; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; }
+.setup-settings:hover { background: var(--chip-bg); color: var(--text); }
 
 :root {
   --bg: #fafaf8;
@@ -96,6 +98,8 @@ code {
 /* ---------------- topbar ---------------- */
 .topbar {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
   padding: 12px 24px;
@@ -126,6 +130,36 @@ code {
   white-space: nowrap;
 }
 .sub { color: var(--text-dim); font-size: 13px; margin-left: 8px; }
+
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.model-picker select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.model-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.desktop-model-name { display: none; }
+.desktop-mode .model-picker { display: none; }
+.desktop-mode .desktop-model-name {
+  display: inline-block;
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 12px;
+}
 
 .mode-toggle {
   display: flex;
@@ -236,6 +270,19 @@ body.mode-tutor .ai-assist-toggle { display: none; }
 
 /* The plan the AI built, shown above the results */
 .assist-plan { margin-top: 12px; }
+.search-thinking {
+  margin: 0 0 16px;
+  padding: 12px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.search-thinking .tutor-thinking { margin-bottom: 0; }
+.search-thinking .tutor-thinking-steps { margin: 0; padding: 0; list-style: none; }
+.search-thinking .tutor-thinking-step { margin: 0 0 16px; }
+.search-thinking .tutor-thinking-step:last-child { margin-bottom: 0; }
+.search-thinking-warning { color: var(--text-dim); font-size: 12px; margin-top: 10px; }
+body.mode-tutor .search-thinking { display: none; }
 .assist-plan-row {
   display: flex;
   flex-wrap: wrap;
@@ -487,6 +534,71 @@ main {
   overflow-wrap: anywhere;
 }
 .note-front { margin: 6px 0; }
+.note-front img, .note-back img, .note-extras img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+.note-image-unavailable {
+  display: block;
+  margin: 6px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.note-image-expandable { cursor: zoom-in; }
+.note-image-expandable:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* The full-screen dialog leaves the original card and source rail in place. */
+body.image-viewer-open { overflow: hidden; }
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 64px 24px 24px;
+  border: 0;
+  background: rgba(8, 10, 15, 0.94);
+  color: #fff;
+  overflow: hidden;
+  cursor: zoom-out;
+}
+.image-viewer[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-viewer::backdrop { background: rgba(0, 0, 0, 0.7); }
+.image-viewer-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: default;
+}
+.image-viewer-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  min-height: 40px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.image-viewer-close:hover { background: rgba(255, 255, 255, 0.22); }
+.image-viewer-close:focus-visible { outline: 3px solid var(--accent); }
+
 .note-back {
   margin-top: 12px;
   padding-top: 12px;
@@ -853,11 +965,11 @@ body.mode-tutor .results > .tutor-shell {
 /* Most recent message gets a larger, more readable font. */
 .tutor-msg-latest .tutor-bubble {
   font-size: 29px;
-  line-height: 1.85;
+  line-height: 1.95;
   padding: 18px 24px;
 }
 /* Extra separation between the blank-line-separated sections. */
-.tutor-msg-latest .tutor-bubble p { margin: 0 0 18px; }
+.tutor-msg-latest .tutor-bubble p { margin: 0 0 24px; }
 .tutor-msg-latest .tutor-bubble p:last-child { margin-bottom: 0; }
 .tutor-msg-user .tutor-bubble {
   background: var(--accent);
@@ -873,6 +985,56 @@ body.mode-tutor .results > .tutor-shell {
 }
 .tutor-bubble p { margin: 0 0 8px; }
 .tutor-bubble p:last-child { margin-bottom: 0; }
+.tutor-thinking {
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.tutor-thinking > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 5px 8px;
+  margin-left: -8px;
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.tutor-thinking > summary::-webkit-details-marker { display: none; }
+.tutor-thinking > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-right: 3px;
+}
+.tutor-thinking[open] > summary::before { transform: rotate(45deg); }
+.tutor-thinking > summary:hover { background: var(--chip-bg); color: var(--text); }
+.tutor-thinking > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tutor-thinking-meta { color: var(--text-faint); font-size: 12px; }
+.tutor-thinking-body {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 2px solid var(--border);
+  padding: 4px 4px 4px 16px;
+  margin: 10px 0 18px;
+}
+.tutor-thinking-caption, .tutor-thinking-unavailable { margin-bottom: 12px; }
+.tutor-thinking-caption { font-size: 12px; color: var(--text-faint); }
+.tutor-bubble .tutor-thinking-steps { margin: 0; padding: 0; list-style: none; }
+.tutor-bubble .tutor-thinking-step { margin: 0 0 16px; }
+.tutor-bubble .tutor-thinking-step:last-child { margin-bottom: 0; }
+.tutor-thinking-label { font-size: 11px; font-weight: 600; margin-bottom: 4px; color: var(--text-faint); }
+.tutor-thinking-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tutor-stream-answer { white-space: pre-wrap; }
+.tutor-stream-answer:empty { display: none; }
+.tutor-thinking-tool .tutor-thinking-text { font-family: var(--mono); font-size: 12px; }
 .tutor-bubble ul, .tutor-bubble ol {
   margin: 4px 0 8px;
   padding-left: 22px;
@@ -1277,6 +1439,12 @@ body.mode-tutor .results > .tutor-shell {
 .note-deck:hover { color: var(--accent); }
 
 /* responsive */
+.deck-count-label {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
   .sidebar { display: none; }

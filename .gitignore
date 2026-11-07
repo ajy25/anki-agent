@@ -1,6 +1,12 @@
 .env
 .venv/
+.venv-build/
 __pycache__/
 cache/
 logs/
+Anki Agent.app/
 CLAUDE.md
+dist/
+build/
+packaging/AppIcon.icns
+.DS_Store

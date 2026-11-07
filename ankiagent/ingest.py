@@ -47,11 +47,11 @@ DECK_PATH = _resolve_deck_path()
 # levels). Selects that deck and all subdecks. Empty = index the whole
 # collection. Ignored for TSV exports.
 DECK_NAME = os.environ.get("DECK_NAME", "").strip() or None
-CACHE_DIR = ROOT / "cache"
+CACHE_DIR = Path(os.environ.get("ANKIAGENT_CACHE_DIR") or ROOT / "cache").expanduser()
 DB_PATH = CACHE_DIR / "anki.db"
 
-# Bump when the cache schema changes so existing caches rebuild automatically.
-SCHEMA_VERSION = "3"
+# Bump when the schema or stored HTML changes so existing caches rebuild.
+SCHEMA_VERSION = "4"  # Preserve image tags previously stripped during import.
 
 
 SCHEMA = """
@@ -263,9 +263,9 @@ def build(
 
 def ensure_built(force: bool = False) -> dict | None:
     """Build only if needed. Returns build stats or None if cache was reused."""
-    if not force and not needs_rebuild(DB_PATH, DECK_PATH):
+    if not force and not needs_rebuild(DB_PATH, DECK_PATH, DECK_NAME):
         return None
-    return build()
+    return build(deck_path=DECK_PATH, db_path=DB_PATH, deck_name=DECK_NAME)
 
 
 def main() -> int:

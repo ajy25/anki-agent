@@ -1,0 +1,75 @@
+"""Frozen app entry point; keep logs and mutable files outside the bundle."""
+from pathlib import Path
+import json
+import os
+import sys
+import tempfile
+
+
+def smoke_test(report: Path):
+    from werkzeug.test import Client
+    from werkzeug.wrappers import Response
+    from ankiagent.desktop import DesktopManager, create_desktop_app
+    from ankiagent.settings import SettingsStore
+    import ankiagent
+    import Security
+    import importlib.util
+    assert importlib.util.find_spec("webview.platforms.cocoa") is not None
+    root = Path(ankiagent.__file__).parent
+    for relative in ("templates/setup.html", "templates/index.html", "static/setup.js", "static/app.js", "static/app.css"):
+        assert (root / relative).is_file(), relative
+    with tempfile.TemporaryDirectory() as temporary:
+        class TestVault:
+            def get(self): return "gsk_local_smoke_test_only"
+            def set(self, key): pass
+        temporary = Path(temporary)
+        manager = DesktopManager(store=SettingsStore(temporary / "preferences", vault=TestVault()))
+        application, _ = create_desktop_app(manager)
+        client = Client(application, Response)
+        page = client.get("/setup", base_url="http://127.0.0.1")
+        assert page.status_code == 200
+        assert b"Set up Anki Agent" in page.data
+        assert client.get("/api/setup/state", base_url="http://127.0.0.1").status_code == 403
+        # Exercise the packaged indexer, SQLite extension, templates, and deck
+        # changes using only synthetic local data and an in-memory credential.
+        import sqlite3
+        collection = temporary / "collection.anki2"
+        with sqlite3.connect(collection) as connection:
+            connection.executescript("""
+                CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT);
+                INSERT INTO fields VALUES (1,0,'Front'),(1,1,'Back');
+                CREATE TABLE decks (id INTEGER, name TEXT);
+                INSERT INTO decks VALUES (1,'Study'),(2,'Study'||char(31)||'GI');
+                CREATE TABLE cards (nid INTEGER, did INTEGER);
+                INSERT INTO cards VALUES (1,1),(2,2);
+                CREATE TABLE notes (id INTEGER, guid TEXT, flds TEXT, tags TEXT, mid INTEGER);
+                INSERT INTO notes VALUES (1,'first','First sample card',' sample ',1),(2,'second','Second sample card',' sample ',1);
+            """)
+        original = collection.read_bytes()
+        for deck, expected in (("Study", 2), ("Study::GI", 1)):
+            manager.config = {"deck_path": str(collection), "deck_name": deck, "enable_hotkey": False}
+            manager.store.save(manager.config)
+            manager._prepare()
+            assert manager.status == "ready", manager.message
+            result = client.get("/api/stats", base_url="http://127.0.0.1")
+            assert result.get_json()["notes"] == expected, result.data
+            result.close()
+        assert collection.read_bytes() == original, "Source collection was modified"
+        page = client.get("/", base_url="http://127.0.0.1")
+        assert b"setup-settings" in page.data
+        page.close()
+    report.write_text(json.dumps({"ok": True, "architecture": __import__("platform").machine(), "setup": True, "native_webview_module": True, "headless": True, "indexing": True, "deck_switching": True, "source_read_only": True}))
+
+
+if __name__ == "__main__":
+    if "--smoke-test" in sys.argv:
+        report = Path(sys.argv[sys.argv.index("--report") + 1])
+        smoke_test(report)
+    else:
+        from ankiagent.settings import data_dir
+        logs = data_dir() / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        with (logs / "desktop.log").open("a", buffering=1) as stream:
+            sys.stdout = sys.stderr = stream
+            from launcher import main
+            main()

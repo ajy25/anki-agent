@@ -15,14 +15,86 @@ Provider and model are configured in .env (see llm_client.py).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
+from types import SimpleNamespace
 from typing import Iterable
 
 from . import search
-from .llm_client import MODEL, get_client, reasoning_kwargs
+from .llm_client import MODEL, get_client, get_model, reasoning_kwargs, reasoning_output_kwargs
 
 RERANK_TIMEOUT = 20.0
+
+
+class TutorCancelled(Exception):
+    """The client discarded its tutor request."""
+
+
+def _check_cancelled(cancelled) -> None:
+    if cancelled is not None and cancelled.is_set():
+        raise TutorCancelled()
+
+
+def _chat_completion(client, *, emit=None, cancelled=None, iteration=1, **kwargs):
+    """Consume provider deltas while assembling the normal tool-loop response."""
+    if emit is None:
+        return client.chat.completions.create(**kwargs)
+    _check_cancelled(cancelled)
+    emit({"event": "round", "iteration": iteration})
+    stream = client.chat.completions.create(stream=True, **kwargs)
+    content, reasoning, tools = [], [], {}
+    finish_reason = None
+    try:
+        for chunk in stream:
+            _check_cancelled(cancelled)
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+            thought = getattr(delta, "reasoning", None)
+            if isinstance(thought, str) and thought:
+                reasoning.append(thought)
+                emit({"event": "reasoning_delta", "text": thought, "iteration": iteration})
+            text = getattr(delta, "content", None)
+            if isinstance(text, str) and text:
+                content.append(text)
+                if not tools:
+                    emit({"event": "answer_delta", "text": text, "iteration": iteration})
+            for part in getattr(delta, "tool_calls", None) or []:
+                if not tools:
+                    # Any text before a tool call is intermediate commentary.
+                    emit({"event": "answer_reset"})
+                tool = tools.setdefault(part.index, {"id": "", "name": "", "arguments": ""})
+                tool["id"] += getattr(part, "id", None) or ""
+                function = getattr(part, "function", None)
+                if function:
+                    tool["name"] += getattr(function, "name", None) or ""
+                    tool["arguments"] += getattr(function, "arguments", None) or ""
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+        if finish_reason is None:
+            raise RuntimeError("Model stream ended before completion")
+        if finish_reason == "length":
+            raise RuntimeError("Model output exceeded its token limit")
+    finally:
+        close = getattr(stream, "close", None)
+        if close:
+            close()
+    message = SimpleNamespace(
+        content="".join(content), reasoning="".join(reasoning),
+        tool_calls=[SimpleNamespace(id=tool["id"], function=SimpleNamespace(
+            name=tool["name"], arguments=tool["arguments"],
+        )) for _, tool in sorted(tools.items())],
+    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish_reason)])
+
+
+def _record_reasoning(message, steps: list[dict], iteration: int) -> None:
+    """Keep provider-returned reasoning as display data, outside chat history."""
+    text = getattr(message, "reasoning", None)
+    if isinstance(text, str) and text.strip():
+        steps.append({"type": "reasoning", "text": text.strip(), "iteration": iteration})
 
 
 def _normalize_citations(text: str) -> str:
@@ -168,8 +240,11 @@ AGENT_TOOLS = [
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 12,
-                        "description": "Max number of cards to return (default 6).",
+                        "maximum": 15,
+                        "description": (
+                            "Max number of cards to return (default 6, up to "
+                            "15). Ask for more when you're surveying a topic."
+                        ),
                     },
                 },
                 "required": ["query"],
@@ -181,9 +256,9 @@ AGENT_TOOLS = [
         "function": {
             "name": "read_note",
             "description": (
-                "Read the full front+back+tags of a single flashcard by its "
-                "GUID. Use only when a card's snippet is truncated or "
-                "ambiguous in a way that matters for your answer."
+                "Read the full front+back+tags of a single flashcard by "
+                "its GUID. Use it whenever a snippet looks relevant but "
+                "doesn't give you the whole card."
             ),
             "parameters": {
                 "type": "object",
@@ -214,7 +289,7 @@ class AgentSession:
     consistently even if the same card surfaces in multiple searches.
     """
 
-    MAX_TOOL_RESULT_CHARS = 6000
+    MAX_TOOL_RESULT_CHARS = 9000
 
     def __init__(
         self,
@@ -226,8 +301,16 @@ class AgentSession:
         deck: str = "",
         system_prompt: str = AGENT_SYSTEM,
         tools: list | None = None,
+        turn_directive: str = "",
+        model: str | None = None,
+        require_deck_search: bool = False,
     ) -> None:
         self.question = question
+        self.model = get_model(model)
+        self.require_deck_search = require_deck_search
+        # Applies to this run only. History is replayed from raw conversation
+        # text, so these response instructions never leak into later turns.
+        self.turn_directive = turn_directive.strip()
         # The system prompt and tool set are configurable so the same loop can
         # drive both the RAG chat and the Tutor (which uses a different prompt
         # and the same deck-only tools).
@@ -272,7 +355,7 @@ class AgentSession:
         if not query:
             return {"error": "empty_query"}
         limit = int(args.get("limit") or 6)
-        limit = max(1, min(limit, 12))
+        limit = max(1, min(limit, 15))
         results = search.fast_search(
             query,
             limit=limit,
@@ -348,11 +431,12 @@ class AgentSession:
 
     # ---- main loop -----------------------------------------------------
 
-    def run(self, *, max_iterations: int = 6) -> tuple[str, list[dict], dict]:
+    def run(self, *, max_iterations: int = 6, on_event=None, cancelled=None) -> tuple[str, list[dict], dict]:
         debug: dict = {
-            "model": MODEL,
+            "model": self.model,
             "agent_trace": self.trace,
             "iterations": 0,
+            "thinking": [],
         }
         t0 = time.perf_counter()
 
@@ -360,9 +444,10 @@ class AgentSession:
             return "Ask a question.", [], debug
 
         client = get_client()
-        messages: list[dict] = [
-            {"role": "system", "content": self.system_prompt},
-        ]
+        system_prompt = self.system_prompt
+        if self.turn_directive:
+            system_prompt += f"\n\nInstructions for this reply only:\n{self.turn_directive}"
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if self.tags or self.exact_tags:
             scope_bits = []
             if self.exact_tags:
@@ -385,9 +470,9 @@ class AgentSession:
         # are plain text only — the tool-call loop for THIS turn starts fresh.
         for h in self.history:
             messages.append({"role": h["role"], "content": h["content"]})
-        messages.append(
-            {"role": "user", "content": f"Question: {self.question}"}
-        )
+        # Send the student's entire message verbatim. Mixing app instructions
+        # into the pasted card can make a model misinterpret its boundaries.
+        messages.append({"role": "user", "content": self.question})
 
         final_answer = ""
         hit_limit = False
@@ -395,21 +480,30 @@ class AgentSession:
         for i in range(max_iterations):
             t_iter = time.perf_counter()
             try:
-                resp = client.chat.completions.create(
-                    model=MODEL,
+                resp = _chat_completion(
+                    client, emit=on_event, cancelled=cancelled, iteration=i + 1,
+                    model=self.model,
                     messages=messages,
                     tools=self.tool_spec,
-                    tool_choice="auto",
+                    tool_choice=(
+                        {"type": "function", "function": {"name": "search_deck"}}
+                        if self.require_deck_search and i == 0 else "auto"
+                    ),
                     temperature=0.2,
                     max_completion_tokens=1500,
                     timeout=RERANK_TIMEOUT,
-                    **reasoning_kwargs(),
+                    **reasoning_kwargs(self.model),
+                    **reasoning_output_kwargs(self.model),
                 )
+            except TutorCancelled:
+                raise
             except Exception as e:
                 debug["error"] = f"{type(e).__name__}:{e}"
                 break
 
             msg = resp.choices[0].message
+            _record_reasoning(msg, debug["thinking"], i + 1)
+            debug["finish_reason"] = getattr(resp.choices[0], "finish_reason", None)
             debug["iterations"] = i + 1
             tool_calls = getattr(msg, "tool_calls", None) or []
 
@@ -434,6 +528,7 @@ class AgentSession:
             })
 
             for tc in tool_calls:
+                _check_cancelled(cancelled)
                 name = tc.function.name or ""
                 try:
                     args = json.loads(tc.function.arguments or "{}")
@@ -449,6 +544,11 @@ class AgentSession:
                     "summary": self._summarize(name, args, result),
                     "ms": round((time.perf_counter() - t_iter) * 1000, 1),
                 })
+                debug["thinking"].append({
+                    "type": "tool", "text": self.trace[-1]["summary"], "iteration": i + 1,
+                })
+                if on_event:
+                    on_event({"event": "tool", "step": debug["thinking"][-1]})
                 payload = json.dumps(result, default=str)
                 if len(payload) > self.MAX_TOOL_RESULT_CHARS:
                     payload = payload[: self.MAX_TOOL_RESULT_CHARS - 20] + '..."TRUNCATED"}'
@@ -471,16 +571,22 @@ class AgentSession:
                 ),
             })
             try:
-                resp = client.chat.completions.create(
-                    model=MODEL,
+                resp = _chat_completion(
+                    client, emit=on_event, cancelled=cancelled, iteration=max_iterations + 1,
+                    model=self.model,
                     messages=messages,
                     temperature=0.2,
                     max_completion_tokens=1200,
                     timeout=RERANK_TIMEOUT,
-                    **reasoning_kwargs(),
+                    **reasoning_kwargs(self.model),
+                    **reasoning_output_kwargs(self.model),
                 )
+                _record_reasoning(resp.choices[0].message, debug["thinking"], max_iterations + 1)
                 final_answer = (resp.choices[0].message.content or "").strip()
+                debug["finish_reason"] = getattr(resp.choices[0], "finish_reason", None)
                 debug["forced_finalize"] = True
+            except TutorCancelled:
+                raise
             except Exception as e:
                 debug["finalize_error"] = f"{type(e).__name__}:{e}"
 
@@ -508,10 +614,7 @@ class AgentSession:
         debug["cited"] = sorted(cited)
 
         if not answer:
-            answer = (
-                "I wasn't able to produce an answer for this question — try "
-                "rephrasing or narrowing the scope."
-            )
+            debug.setdefault("error", debug.get("finalize_error") or "empty_response")
 
         return answer, labeled_sources, debug
 
@@ -535,32 +638,39 @@ TUTOR_AGENT_SYSTEM = (
     "flashcard or question as their message; later messages are follow-ups "
     "(a clarification, an expansion, or a new question). Use the earlier "
     "turns to interpret what they mean.\n\n"
+    "A pasted flashcard may include its question, its answer, extra notes, "
+    "and resource names across several paragraphs. Treat all of that as "
+    "the supplied card. When a card is supplied without an explicit request, "
+    "explain the fact it tests; the included answer is useful context. "
+    "Do not ask the student to paste a card or question that is already "
+    "present in their message.\n\n"
+    "FOCUS: When the student supplies a card, center the explanation on "
+    "the exact fact, cloze answer, or relationship that card tests. A brief, "
+    "specific classification of the subject gives useful context before "
+    "explaining that fact. Use "
+    "the card's wording and clues to explain that point. Other retrieved "
+    "cards support this explanation; they should not turn it into a "
+    "general review of the surrounding topic. Add broader context only "
+    "when it helps explain the card or the student asks for it.\n\n"
     "BEFORE answering, gather evidence from the deck — never answer from "
-    "memory alone:\n"
-    "1. Call `search_deck` on the most direct phrasing of the concept.\n"
-    "2. Run a few more `search_deck` calls from different angles — the named "
-    "disease/drug/mechanism, the parent concept, and the contrasting concept "
-    "you'll mention in section 3. Several searches is normal and encouraged.\n"
-    "3. Use `read_note` only when a card's snippet is truncated or ambiguous "
-    "in a way that matters.\n"
-    "4. Stop once the topic is well covered; don't pad with redundant calls.\n"
+    "memory alone. You decide how to search and how much: there is no "
+    "required number of calls and no required order. Start with the "
+    "specific fact or relationship in the student's card or question. "
+    "Search its direct phrasing, named disease/drug/mechanism, synonyms, "
+    "and abbreviations as needed to find the relevant evidence. Expand "
+    "to related concepts when they help explain this specific card or "
+    "answer the question. When results are thin or off "
+    "target, reword and search again rather than settling for a weak hit; "
+    "when a snippet looks relevant but incomplete, `read_note` it. Raise "
+    "`limit` when you need more relevant candidate cards. Err on the side of one "
+    "more search — the only calls worth skipping are ones you already know "
+    "the answer to.\n"
     "Termination: to finish, respond with NO tool calls — that message "
     "becomes your answer.\n\n"
-    "ANSWER FORMAT — when the student pastes a flashcard or asks about a "
-    "specific concept, respond in three short sections with a BLANK LINE "
-    "between each (so they render as separate paragraphs). No headers, "
-    "labels, bullets, or preamble:\n"
-    "1. One or two sentences that name the parent concept or clinical "
-    "correlation this falls under AND briefly say what that parent concept "
-    "actually is — give the big-picture idea, not just the label.\n"
-    "2. A clear, plain-language explanation of the concept itself at USMLE "
-    "Step 1 depth. Aim for roughly two sentences, but use a little more or "
-    "less if that makes it clearer — clarity always wins.\n"
-    "3. One sentence contrasting it with a similar, frequently-confused, "
-    "high-yield Step 1 concept, stating the single feature that tells them "
-    "apart.\n"
-    "For a follow-up question, drop the three-section format and answer "
-    "directly and conversationally.\n\n"
+    "ANSWERING: Answer the student's actual message directly and "
+    "conversationally — no fixed template, no headers, no preamble. If a "
+    "given turn asks for a specific shape, follow it for that reply only and "
+    "go back to answering conversationally afterwards.\n\n"
     "CITATIONS: Ground every factual claim that comes from the deck with "
     "plain ASCII bracket citations to flashcard refs you actually observed "
     "in tool results, e.g. [2] or [1][3]. Do NOT use Unicode brackets. Do "
@@ -580,20 +690,71 @@ TUTOR_AGENT_SYSTEM = (
     "searches)."
 )
 
+# Added to the system instructions for the FIRST turn only, so the reply follows
+# the flashcard breakdown shape while every follow-up stays a normal answer.
+# Later requests rebuild the system prompt without this directive.
+TUTOR_FIRST_TURN_FORMAT = (
+    "Format for this reply only: two or three short sections with a BLANK LINE "
+    "between each (so they render as separate paragraphs). No headers, "
+    "labels, bullets, or preamble. Keep it short: aim for 60-100 words total.\n"
+    "1. Open with ONE short, factual, declarative sentence identifying the "
+    "card's subject and its specific, useful class or category. For an "
+    "organism, identify what kind of organism or parasite it is; for a "
+    "drug, identify its drug class. Generic labels such as 'a parasite' "
+    "or 'a drug' are too vague. Include a defining feature relevant to "
+    "the card if helpful. This sentence should orient the student, not "
+    "simply repeat the card's answer or explain its mnemonic. "
+    "If the student supplied a question instead, answer it directly.\n"
+    "2. Explain WHY that exact fact or answer is true in plain language, "
+    "connecting the relevant mechanism or reasoning back to the card's "
+    "wording and making the cloze answer explicit when present. Stay at "
+    "USMLE Step 1 depth. Use one or two short sentences with only the "
+    "background needed to understand this card.\n"
+    "3. One sentence contrasting it with a similar, frequently-confused, "
+    "high-yield Step 1 concept, stating the single feature in this card "
+    "that tells them apart. Include this only if it directly helps the "
+    "student understand or remember this card; otherwise omit it."
+)
+
 TUTOR_TIMEOUT = 60.0
 TUTOR_MAX_HISTORY = 40   # user+assistant turns kept in context
+TUTOR_MAX_RETRIES = 3   # One initial attempt, then at most three retries.
+
+
+_MISSING_INPUT_RE = re.compile(
+    r"\b(?:your|the|this)\s+(?:message|input|question|card|text)\s+"
+    r"(?:(?:is|was|seems|looks|appears)(?:\s+(?:to be|like|completely|still)){0,3}"
+    r"|(?:came|arrived)(?:\s+(?:through|in))?|got)\s+(?:empty|blank|cut off)\b"
+    r"|\bno\s+(?:card|question|message|text|input)\b"
+    r"[^.!?\n]{0,45}\b(?:attached|provided|included|received|supplied)\b"
+    r"|\b(?:didn't|haven't|have not|did not|don't|do not)\s+"
+    r"(?:receive|include|provide|supply|attach|see)\b"
+    r"[^.!?\n]{0,70}\b(?:card|question|message|text|input)\b",
+    re.IGNORECASE,
+)
+
+
+def _claims_missing_input(answer: str) -> bool:
+    """Recognize a false missing-message response, not an empty medical organ."""
+    opening = answer[:600].replace("’", "'")
+    return bool(_MISSING_INPUT_RE.search(opening))
 
 
 def tutor_chat(
-    messages: list[dict], *, deck: str = "", max_iterations: int = 6
+    messages: list[dict], *, deck: str = "", max_iterations: int = 12,
+    model: str | None = None, on_event=None, cancelled=None,
 ) -> tuple[str, list[dict], dict]:
     """Agentic, deck-grounded tutor reply.
 
     `messages` is the full conversation as {role, content} dicts (role in
-    {'user','assistant'}); the last must be the current user turn. Returns
+    {'user','assistant'}); the last must be the current user turn.
+    `max_iterations` counts model round-trips, not individual tool calls —
+    the model can batch several searches into one round, so the practical
+    search budget is higher than this number. Returns
     (answer, sources, debug): the reply text with inline [N] citations, the
     observed flashcards (cited-first, each with a string `ref` and a `cited`
     flag), and a debug dict including the agent trace.
+    Failed responses get up to three retries, each with a fresh search session.
     """
     trimmed = (
         messages[-TUTOR_MAX_HISTORY:]
@@ -602,14 +763,98 @@ def tutor_chat(
     )
     question = trimmed[-1]["content"] if trimmed else ""
     history = trimmed[:-1]
-    session = AgentSession(
-        question,
-        history=history,
-        deck=deck,
-        system_prompt=TUTOR_AGENT_SYSTEM,
-        tools=TUTOR_TOOLS,
-    )
-    return session.run(max_iterations=max_iterations)
+    t0 = time.perf_counter()
+    failures: list[dict] = []
+    thinking: list[dict] = []
+    for attempt in range(TUTOR_MAX_RETRIES + 1):
+        _check_cancelled(cancelled)
+        if attempt:
+            # Brief backoff avoids immediately repeating a transient failure.
+            delay = 0.5 * 2 ** (attempt - 1)
+            if cancelled is None:
+                time.sleep(delay)
+            elif cancelled.wait(delay):
+                raise TutorCancelled()
+        system_prompt = TUTOR_AGENT_SYSTEM
+        if failures and failures[-1]["error"] == "false_empty_input":
+            system_prompt += (
+                "\n\nA previous attempt incorrectly said the supplied message "
+                "was empty. The latest user message contains the full card or "
+                "question. Read all its paragraphs and explain its medical "
+                "content. Resource labels and a trailing card number are "
+                "ancillary text. Search using the medical terms in that "
+                "message; do not ask the student to send it again."
+            )
+        # A fresh session discards unrelated evidence and the invalid reply
+        # from a rejected attempt. Keep the selected model and real history.
+        session = AgentSession(
+            question,
+            history=history,
+            deck=deck,
+            system_prompt=system_prompt,
+            tools=TUTOR_TOOLS,
+            turn_directive="" if history else TUTOR_FIRST_TURN_FORMAT,
+            model=model,
+            require_deck_search=True,
+        )
+        run_kwargs = {"max_iterations": max_iterations}
+        stream_steps: list[dict] = []
+        if on_event:
+            def emit_event(event):
+                if event["event"] == "reasoning_delta":
+                    previous = stream_steps[-1] if stream_steps else None
+                    if previous and previous["type"] == "reasoning" and previous["iteration"] == event["iteration"]:
+                        previous["text"] += event["text"]
+                    else:
+                        stream_steps.append({"type": "reasoning", "text": event["text"], "iteration": event["iteration"]})
+                elif event["event"] == "tool":
+                    stream_steps.append(event["step"])
+                on_event({**event, "attempt": attempt + 1})
+            on_event({"event": "attempt", "attempt": attempt + 1, "model": session.model})
+            run_kwargs.update(on_event=emit_event, cancelled=cancelled)
+        answer, sources, debug = session.run(**run_kwargs)
+        thinking.extend({**step, "attempt": attempt + 1} for step in (
+            stream_steps if on_event else debug.get("thinking", [])
+        ))
+        debug["thinking"] = thinking
+        debug["response_retries"] = attempt
+        debug["total_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        error = debug.get("error") or debug.get("finalize_error")
+        if question.strip() and not error:
+            if not answer.strip():
+                error = "empty_response"
+            elif _claims_missing_input(answer):
+                error = "false_empty_input"
+        if not error:
+            debug["retry_failures"] = failures
+            return answer, sources, debug
+
+        failures.append({
+            "attempt": attempt + 1,
+            "error": error,
+            "finish_reason": debug.get("finish_reason"),
+        })
+        debug["error"] = error
+        debug["retry_failures"] = failures
+        reason = {
+            "empty_response": "The model returned no answer.",
+            "false_empty_input": "The model misread the supplied message as empty.",
+        }.get(error, "The model request failed.")
+        thinking.append({
+            "type": "retry" if attempt < TUTOR_MAX_RETRIES else "error",
+            "text": reason + (" Retrying…" if attempt < TUTOR_MAX_RETRIES else " All attempts failed."),
+            "attempt": attempt + 1,
+        })
+        if on_event:
+            on_event({"event": "retry", "step": thinking[-1], "attempt": attempt + 1})
+        logging.getLogger(__name__).warning(
+            "Tutor attempt failed: model=%s attempt=%d/%d error=%s finish_reason=%s",
+            session.model, attempt + 1, TUTOR_MAX_RETRIES + 1,
+            error, debug.get("finish_reason"),
+        )
+
+    # A failed answer and its sources must never enter conversation history.
+    return "", [], debug
 
 
 # ---------------------------------------------------------------------------
@@ -793,12 +1038,14 @@ def _run_planner(
     *,
     max_iterations: int = 6,
     timeout: float = ASSIST_TIMEOUT,
+    model: str | None = None, on_event=None, cancelled=None,
 ) -> dict:
     """Drive the find_tags tool loop and return the model's final JSON plan.
 
     Shared by AI-assisted search and Deep search's scout phase. Records
     `iterations` and each `find_tags` lookup into `debug`.
     """
+    model = get_model(model)
     client = get_client()
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -806,18 +1053,24 @@ def _run_planner(
     ]
     plan: dict = {}
     for i in range(max_iterations):
+        _check_cancelled(cancelled)
         debug["iterations"] = i + 1
         try:
-            resp = client.chat.completions.create(
-                model=MODEL,
+            resp = _search_completion(
+                client, debug["thinking"], iteration=i + 1, phase="plan",
+                on_event=on_event, cancelled=cancelled,
+                model=model,
                 messages=messages,
                 tools=ASSIST_TOOLS,
                 tool_choice="auto",
                 temperature=0.1,
                 max_completion_tokens=1200,
                 timeout=timeout,
-                **reasoning_kwargs(),
+                **reasoning_kwargs(model),
+                **reasoning_output_kwargs(model),
             )
+        except TutorCancelled:
+            raise
         except Exception as e:
             debug["error"] = f"{type(e).__name__}:{e}"
             break
@@ -844,6 +1097,7 @@ def _run_planner(
             ],
         })
         for tc in tool_calls:
+            _check_cancelled(cancelled)
             try:
                 args = json.loads(tc.function.arguments or "{}")
                 if not isinstance(args, dict):
@@ -860,6 +1114,7 @@ def _run_planner(
                     "n": len(hits),
                 })
                 result = {"matches": hits}
+                summary = f"Looked up tags containing {args.get('substring')!r}: {len(hits)} matching tags."
             elif tc.function.name == "search_deck":
                 probe_q = str(args.get("query") or "").strip()
                 probe_tags = [
@@ -888,8 +1143,11 @@ def _run_planner(
                         for h in hits[:n_samples]
                     ],
                 }
+                summary = f"Searched {probe_q!r}: {'at least ' if len(hits) >= PROBE_CAP else ''}{len(hits)} matching cards."
             else:
                 result = {"error": f"unknown_tool:{tc.function.name}"}
+                summary = f"Unknown search tool: {tc.function.name}"
+            _search_activity(debug, summary, on_event=on_event, phase="plan", iteration=i + 1)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -899,8 +1157,40 @@ def _run_planner(
     return plan if isinstance(plan, dict) else {}
 
 
+def _search_activity(debug: dict, text: str, *, on_event=None, phase="plan", **context) -> None:
+    step = {"type": "tool", "text": text, "phase": phase, **context}
+    debug.setdefault("thinking", []).append(step)
+    if on_event:
+        on_event({"event": "tool", "step": step})
+
+
+def _search_completion(client, thinking: list[dict], *, iteration=1, phase="plan",
+                       batch=None, on_event=None, cancelled=None, **kwargs):
+    """Capture search reasoning; the JSON search plan remains internal."""
+    context = {"phase": phase, "iteration": iteration}
+    if batch is not None:
+        context["batch"] = batch
+    if on_event:
+        def emit(event):
+            if event["event"] != "reasoning_delta":
+                return
+            previous = thinking[-1] if thinking else None
+            if previous and previous["type"] == "reasoning" and all(previous.get(k) == v for k, v in context.items()):
+                previous["text"] += event["text"]
+            else:
+                thinking.append({"type": "reasoning", "text": event["text"], **context})
+            on_event({**event, **context})
+        return _chat_completion(client, emit=emit, cancelled=cancelled, iteration=iteration, **kwargs)
+    response = client.chat.completions.create(**kwargs)
+    captured = []
+    _record_reasoning(response.choices[0].message, captured, iteration)
+    thinking.extend({**step, **context} for step in captured)
+    return response
+
+
 def assisted_search(
-    query: str, *, limit: int = 60, deck: str = "", max_iterations: int = 6
+    query: str, *, limit: int = 60, deck: str = "", max_iterations: int = 6,
+    model: str | None = None, on_event=None, cancelled=None,
 ) -> tuple[list[dict], dict, dict]:
     """Plain-English -> deck search. Returns (results, plan, debug).
 
@@ -908,15 +1198,21 @@ def assisted_search(
     emits a JSON plan (AND + OR) that is executed against the deck, optionally
     scoped to a `deck` subtree.
     """
-    debug: dict = {"model": MODEL, "tag_lookups": [], "iterations": 0}
+    model = get_model(model)
+    started = time.perf_counter()
+    debug: dict = {"model": model, "tag_lookups": [], "iterations": 0, "thinking": []}
     if not query.strip():
         return [], {}, debug
     plan = _run_planner(
-        ASSIST_SYSTEM, f"Request: {query}", debug, max_iterations=max_iterations
+        ASSIST_SYSTEM, f"Request: {query}", debug, max_iterations=max_iterations,
+        model=model, on_event=on_event, cancelled=cancelled,
     )
+    _check_cancelled(cancelled)
     results = _run_assist_plan(plan, limit=limit, deck=deck)
     norm_plan = _norm_plan(plan)
     debug["result_count"] = len(results)
+    _search_activity(debug, f"The final search plan matched {len(results)} cards.", on_event=on_event)
+    debug["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
     return results, norm_plan, debug
 
 
@@ -1014,9 +1310,11 @@ def _relax_plan(plan: dict) -> list[dict]:
 
 
 def _screen_batch(
-    intent: str, refinements: list[str], batch: list[tuple[int, dict]]
-) -> tuple[dict[int, str], str | None]:
-    """Screen one batch of (index, note). Returns ({index: why}, error?)."""
+    intent: str, refinements: list[str], batch: list[tuple[int, dict]],
+    *, model: str | None = None, batch_number=1, on_event=None, cancelled=None,
+) -> tuple[dict[int, str], str | None, list[dict]]:
+    """Screen (index, note) entries; return kept reasons, error, and activity."""
+    model = get_model(model)
     lines = [
         f"[{idx}] {_candidate_summary(note, max_len=280)}"
         for idx, note in batch
@@ -1025,9 +1323,13 @@ def _screen_batch(
         "\nUser narrowing: " + "; ".join(refinements) if refinements else ""
     )
     user = f"Request: {intent}{refine_txt}\n\nCards:\n" + "\n".join(lines)
+    thinking = []
     try:
-        resp = get_client().chat.completions.create(
-            model=MODEL,
+        _check_cancelled(cancelled)
+        resp = _search_completion(
+            get_client(), thinking, phase="screen", batch=batch_number,
+            on_event=on_event, cancelled=cancelled,
+            model=model,
             messages=[
                 {"role": "system", "content": SCREEN_SYSTEM},
                 {"role": "user", "content": user},
@@ -1035,12 +1337,20 @@ def _screen_batch(
             temperature=0.0,
             max_completion_tokens=1200,
             timeout=DEEP_TIMEOUT,
-            **reasoning_kwargs(),
+            **reasoning_kwargs(model),
+            **reasoning_output_kwargs(model),
         )
+    except TutorCancelled:
+        raise
     except Exception as e:
-        return {}, f"{type(e).__name__}:{e}"
+        step = {"type": "error", "text": "This screening batch failed; its cards were not included.", "phase": "screen", "batch": batch_number}
+        thinking.append(step)
+        if on_event:
+            on_event({"event": "tool", "step": step})
+        return {}, f"{type(e).__name__}:{e}", thinking
     obj = _loose_json_obj(resp.choices[0].message.content or "")
     keep: dict[int, str] = {}
+    valid_indices = {idx for idx, _ in batch}
     for item in (obj.get("keep") or []):
         if not isinstance(item, dict):
             continue
@@ -1048,12 +1358,17 @@ def _screen_batch(
             i = int(item.get("i"))
         except (TypeError, ValueError):
             continue
-        keep[i] = str(item.get("why") or "").strip()
-    return keep, None
+        if i in valid_indices:
+            keep[i] = str(item.get("why") or "").strip()
+    activity = {"thinking": thinking}
+    _search_activity(activity, f"Screened {len(batch)} cards; kept {len(keep)}.",
+                     on_event=on_event, phase="screen", batch=batch_number)
+    return keep, None, thinking
 
 
 def _screen_candidates(
-    intent: str, refinements: list[str], pool: list[dict]
+    intent: str, refinements: list[str], pool: list[dict],
+    *, model: str | None = None, on_event=None, cancelled=None,
 ) -> tuple[list[dict], dict]:
     """Run include/exclude screening over the pool, in parallel batches.
 
@@ -1067,20 +1382,23 @@ def _screen_candidates(
     ]
     keep_map: dict[int, str] = {}
     errors: list[str] = []
+    thinking: list[dict] = []
     with ThreadPoolExecutor(max_workers=DEEP_SCREEN_WORKERS) as ex:
-        for keep, err in ex.map(
-            lambda b: _screen_batch(intent, refinements, b), batches
+        for keep, err, steps in ex.map(
+            lambda entry: _screen_batch(intent, refinements, entry[1], model=model,
+                batch_number=entry[0] + 1, on_event=on_event, cancelled=cancelled), enumerate(batches)
         ):
             if err:
                 errors.append(err)
             keep_map.update(keep)
+            thinking.extend(steps)
 
     kept = [
         {**note, "deep_why": keep_map[i]}
         for i, note in indexed
         if i in keep_map
     ]
-    debug = {"batches": len(batches)}
+    debug = {"batches": len(batches), "thinking": thinking}
     if errors:
         debug["screen_errors"] = errors[:3]
     return kept, debug
@@ -1093,6 +1411,7 @@ def deep_search(
     confirm: bool = False,
     deck: str = "",
     max_iterations: int = 6,
+    model: str | None = None, on_event=None, cancelled=None,
 ) -> dict:
     """Deep, screened search with a human-in-the-loop narrowing step.
 
@@ -1105,30 +1424,39 @@ def deep_search(
     3. Screen: an LLM judges include/exclude for each pooled card; return
        status='results' with the keepers (each carrying a `deep_why`).
     """
-    debug: dict = {"model": MODEL, "tag_lookups": [], "iterations": 0,
-                   "phase": "scout"}
+    model = get_model(model)
+    started = time.perf_counter()
+    debug: dict = {"model": model, "tag_lookups": [], "iterations": 0,
+                   "phase": "scout", "thinking": []}
+    def finish(payload):
+        debug["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        return payload
     intent = (intent or "").strip()
     refinements = [str(r).strip() for r in refinements if str(r).strip()]
     if not intent:
-        return {"status": "results", "results": [], "plan": {},
-                "candidate_count": 0, "debug": debug}
+        return finish({"status": "results", "results": [], "plan": {},
+                "candidate_count": 0, "debug": debug})
 
     plan = _run_planner(
         DEEP_SCOUT_SYSTEM,
         _scout_user_content(intent, refinements),
         debug,
         max_iterations=max_iterations,
+        model=model, on_event=on_event, cancelled=cancelled,
     )
     norm = _norm_plan(plan)
 
     candidates = _run_assist_plan(plan, limit=DEEP_SCREEN_HARD_MAX, deck=deck)
+    _check_cancelled(cancelled)
 
     # Recall fallback: if the scout over-constrained to nothing, loosen the
     # plan (tags-only, then keywords-only, ORed) so the screener has cards to
     # judge instead of dead-ending.
     if not candidates:
         for rp in _relax_plan(norm):
+            _check_cancelled(cancelled)
             cand = _run_assist_plan(rp, limit=DEEP_SCREEN_HARD_MAX, deck=deck)
+            _search_activity(debug, f"Tried a broader search plan: {len(cand)} candidate cards.", on_event=on_event)
             if cand:
                 candidates = cand
                 norm = _norm_plan(rp)
@@ -1137,14 +1465,16 @@ def deep_search(
 
     n = len(candidates)
     debug["candidate_count"] = n
+    _search_activity(debug, f"Pooled {n} candidate cards for screening.", on_event=on_event)
 
     if n == 0:
-        return {"status": "results", "results": [], "plan": norm,
-                "candidate_count": 0, "debug": debug}
+        return finish({"status": "results", "results": [], "plan": norm,
+                "candidate_count": 0, "debug": debug})
 
     if n > DEEP_SCREEN_THRESHOLD and not confirm:
         debug["phase"] = "clarify"
-        return {
+        _search_activity(debug, "Waiting for you to narrow the search or confirm screening all candidates.", on_event=on_event)
+        return finish({
             "status": "clarify",
             "message": (
                 f"I found {n} candidate cards for this — that's a lot to "
@@ -1156,13 +1486,16 @@ def deep_search(
             "facets": _suggest_facets(candidates),
             "plan": norm,
             "debug": debug,
-        }
+        })
 
     pool = candidates[:DEEP_SCREEN_HARD_MAX]
-    kept, screen_debug = _screen_candidates(intent, refinements, pool)
+    kept, screen_debug = _screen_candidates(intent, refinements, pool, model=model,
+        on_event=on_event, cancelled=cancelled)
     debug["phase"] = "screen"
     debug["screened"] = len(pool)
     debug["kept"] = len(kept)
+    debug["thinking"].extend(screen_debug.pop("thinking", []))
     debug.update(screen_debug)
-    return {"status": "results", "results": kept, "plan": norm,
-            "candidate_count": n, "debug": debug}
+    _search_activity(debug, f"Finished screening: kept {len(kept)} of {len(pool)} cards.", on_event=on_event, phase="screen")
+    return finish({"status": "results", "results": kept, "plan": norm,
+            "candidate_count": n, "debug": debug})

@@ -5,17 +5,23 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 const state = {
   mode: "fast",
+  model: "",               // selected model, captured separately for each request
   query: "",
   activeTags: new Set(),   // holds full hierarchical tag strings (exact-match)
   lastReq: 0,
   tutorMessages: [],       // [{role: "user"|"assistant", content: string}]
   tutorPending: false,
+  tutorAbort: null,        // cancels a request when its conversation is discarded
+  tutorLive: null,         // partial output; only completed answers enter history
+  searchAbort: null,
+  searchDebug: null,
+  searchThinkingOpen: false,
   deck: "",                // selected deck/subdeck path ("" = whole index)
   aiAssist: false,         // Search mode: route through the AI planner
   deep: false,             // Search mode: route through Deep AI search
   deepIntent: "",          // the intent the current Deep run is screening
   deepRefinements: [],     // user narrowing details added during clarify
-  lastIds: [],             // Anki note ids of the current result set (Copy all IDs)
+  lastIds: [],             // Anki note ids of the current result set (bulk Anki search)
 };
 
 const VALID_MODES = new Set(["fast", "tutor"]);
@@ -58,7 +64,42 @@ function applyModeUi() {
   document.body.classList.toggle("mode-tutor", state.mode === "tutor");
 }
 
+function setModel(model) {
+  const select = $("#model-select");
+  const option = Array.from(select.options).find((item) => item.value === model);
+  if (!option) return false;
+  select.value = model;
+  state.model = model;
+  $("#desktop-model-name").textContent = option.textContent;
+  try { localStorage.setItem("ankiagent.model", model); } catch { /* ignore */ }
+  return true;
+}
+
+function bindModelPicker() {
+  const modelSelect = $("#model-select");
+  try {
+    const saved = localStorage.getItem("ankiagent.model");
+    if (Array.from(modelSelect.options).some((option) => option.value === saved)) {
+      modelSelect.value = saved;
+    }
+  } catch { /* Model selection still works when storage is unavailable. */ }
+  setModel(modelSelect.value);
+  modelSelect.addEventListener("change", () => setModel(modelSelect.value));
+  // The native macOS menu calls this same setter. Both controls keep the
+  // current conversation and leave any request already in progress alone.
+  window.setModel = setModel;
+  const useNativeMenu = () => {
+    document.body.classList.add("desktop-mode");
+    const setup = $("#setup-settings");
+    if (setup) setup.hidden = false;
+  };
+  window.addEventListener("pywebviewready", useNativeMenu);
+  if (window.pywebview?.api) useNativeMenu();
+}
+
 function bindUi() {
+  bindImageViewer();
+  bindModelPicker();
   $("#search-form").addEventListener("submit", (e) => {
     e.preventDefault();
     runCurrent();
@@ -68,6 +109,8 @@ function bindUi() {
   const deepToggle = $("#deep-search");
   if (aiToggle) {
     aiToggle.addEventListener("change", () => {
+      cancelSearchRequest();
+      hideSearchThinking();
       state.aiAssist = aiToggle.checked;
       // AI assist and Deep are mutually exclusive search depths.
       if (state.aiAssist && deepToggle?.checked) {
@@ -84,6 +127,8 @@ function bindUi() {
   }
   if (deepToggle) {
     deepToggle.addEventListener("change", () => {
+      cancelSearchRequest();
+      hideSearchThinking();
       state.deep = deepToggle.checked;
       if (state.deep && aiToggle?.checked) {
         aiToggle.checked = false;
@@ -126,6 +171,8 @@ function bindUi() {
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
       if (btn.dataset.mode === state.mode) return;
+      if (state.mode === "tutor") cancelTutorRequest();
+      else { cancelSearchRequest(); hideSearchThinking(); }
       state.mode = btn.dataset.mode;
       applyModeUi();
       if (state.mode === "tutor") {
@@ -147,8 +194,12 @@ function bindUi() {
   });
 
   document.addEventListener("keydown", (e) => {
+    // Let the modal handle Escape without hiding the desktop app or clearing
+    // search. Other app shortcuts must not steal focus from the viewer.
+    if ($("#image-viewer").open) return;
     const active = document.activeElement;
-    const inField = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    const inField = active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
+    if (active?.tagName === "SELECT" && e.key === "Escape") return;
     if (e.key === "/" && !inField) {
       e.preventDefault();
       if (state.mode === "tutor") {
@@ -169,6 +220,7 @@ function bindUi() {
   });
 
   window.addEventListener("focus", () => {
+    if ($("#image-viewer").open) return;
     if (state.mode === "tutor") {
       const ti = $("#tutor-input");
       if (ti) ti.focus();
@@ -177,6 +229,31 @@ function bindUi() {
     const q = $("#q");
     if (q) { q.focus(); q.select(); }
   });
+}
+
+function bindImageViewer() {
+  const viewer = $("#image-viewer");
+  viewer.querySelector(".image-viewer-close").addEventListener("click", () => viewer.close());
+  viewer.addEventListener("click", (event) => {
+    if (event.target === viewer) viewer.close();
+  });
+  viewer.addEventListener("close", () => {
+    document.body.classList.remove("image-viewer-open");
+    viewer.querySelector("img").removeAttribute("src");
+  });
+}
+
+function openCardImage(img) {
+  if (!img.naturalWidth) return;
+  const viewer = $("#image-viewer");
+  const expanded = viewer.querySelector("img");
+  expanded.src = img.currentSrc || img.src;
+  expanded.alt = img.alt || "Card image";
+  // A modal dialog keeps keyboard focus inside and returns it to this image
+  // on close. The original card and its scroll position stay in place.
+  img.focus({ preventScroll: true });
+  viewer.showModal();
+  document.body.classList.add("image-viewer-open");
 }
 
 async function loadStats() {
@@ -270,7 +347,7 @@ function buildDeckNode(node, depth) {
   row.innerHTML = `
     <span class="deck-caret${hasKids ? "" : " deck-caret-empty"}">${hasKids ? "▸" : ""}</span>
     <span class="deck-name">${escapeHtml(node.label)}</span>
-    <span class="deck-count">${node.count.toLocaleString()}</span>
+    <span class="deck-count" title="Unique notes in this deck and its subdecks">${node.count.toLocaleString()}</span>
   `;
 
   let childBox = null;
@@ -345,6 +422,10 @@ async function runSearch() {
   if (state.deep) return runDeepSearch(q);
   if (state.aiAssist) return runAssistedSearch(q);
 
+  cancelSearchRequest();
+  hideSearchThinking();
+  hideAssistPlan();
+
   if (!q && state.activeTags.size === 0 && !state.deck) {
     renderEmpty("Type a query, pick a deck, or click a tag.");
     return;
@@ -379,24 +460,32 @@ async function runSearch() {
 // server-side. Renders the chosen plan above the matching cards.
 async function runAssistedSearch(q) {
   if (!q) {
+    cancelSearchRequest();
+    hideSearchThinking();
     renderEmpty("Describe what you want — e.g. \"high-yield cards on a topic\".");
     hideAssistPlan();
     return;
   }
+  const {reqId, controller} = beginSearchThinking();
   renderLoading("AI is building your search…");
-  const reqId = ++state.lastReq;
   const started = performance.now();
   try {
     const res = await fetch("/api/search_assist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q, deck: state.deck }),
-    }).then((r) => r.json());
+      signal: controller.signal,
+      body: JSON.stringify({ q, deck: state.deck, model: state.model, stream: true }),
+    }).then((response) => readSearchResponse(response, reqId));
     if (reqId !== state.lastReq) return;
     const elapsed = (performance.now() - started).toFixed(0);
     renderAssisted(res, elapsed);
   } catch (e) {
-    if (reqId === state.lastReq) renderError(e);
+    if (reqId === state.lastReq && e.name !== "AbortError") {
+      renderSearchThinking({...state.searchDebug, streaming: false, error: String(e)});
+      renderError(e);
+    }
+  } finally {
+    if (reqId === state.lastReq) state.searchAbort = null;
   }
 }
 
@@ -405,6 +494,8 @@ async function runAssistedSearch(q) {
 // a `clarify` step asking the user to narrow a broad search before screening.
 async function runDeepSearch(q, { confirm = false, viaRefine = false } = {}) {
   if (!q) {
+    cancelSearchRequest();
+    hideSearchThinking();
     renderEmpty("Describe what you want — Deep search reads and screens each card.");
     hideAssistPlan();
     return;
@@ -414,32 +505,41 @@ async function runDeepSearch(q, { confirm = false, viaRefine = false } = {}) {
     state.deepIntent = q;
     state.deepRefinements = [];
   }
+  const {reqId, controller} = beginSearchThinking();
   renderLoading(
     confirm ? "Screening every candidate card…" : "Deep search: pooling candidates…"
   );
-  const reqId = ++state.lastReq;
   const started = performance.now();
   try {
     const res = await fetch("/api/deep_search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         q: state.deepIntent,
         refinements: state.deepRefinements,
         confirm,
         deck: state.deck,
+        model: state.model,
+        stream: true,
       }),
-    }).then((r) => r.json());
+    }).then((response) => readSearchResponse(response, reqId));
     if (reqId !== state.lastReq) return;
     const elapsed = (performance.now() - started).toFixed(0);
     if (res.status === "clarify") renderDeepClarify(res, elapsed);
     else renderDeepResults(res, elapsed);
   } catch (e) {
-    if (reqId === state.lastReq) renderError(e);
+    if (reqId === state.lastReq && e.name !== "AbortError") {
+      renderSearchThinking({...state.searchDebug, streaming: false, error: String(e)});
+      renderError(e);
+    }
+  } finally {
+    if (reqId === state.lastReq) state.searchAbort = null;
   }
 }
 
 function renderDeepClarify(res, elapsedMs) {
+  renderSearchThinking(res.debug || {}, elapsedMs);
   renderAssistPlan(res.plan || {});
   setCopyAllIds([]);
   $("#result-count").textContent = `${res.candidate_count} candidates`;
@@ -499,6 +599,7 @@ function renderDeepResults(res, elapsedMs) {
   const container = $("#results");
   const results = res.results || [];
   const debug = res.debug || {};
+  renderSearchThinking(debug, elapsedMs);
 
   if (res.status === "error" || debug.error) {
     hideAssistPlan();
@@ -618,6 +719,7 @@ function renderAssisted(res, elapsedMs) {
   const results = res.results || [];
   const plan = res.plan || {};
   const debug = res.debug || {};
+  renderSearchThinking(debug, elapsedMs);
   const probes = Array.isArray(debug.tag_lookups) ? debug.tag_lookups.length : 0;
 
   if (debug.error) {
@@ -646,14 +748,105 @@ function renderAssisted(res, elapsedMs) {
   for (const note of results) container.appendChild(renderNote(note));
 }
 
+function cancelSearchRequest() {
+  ++state.lastReq;
+  state.searchAbort?.abort();
+  state.searchAbort = null;
+}
+
+function hideSearchThinking() {
+  state.searchDebug = null;
+  state.searchThinkingOpen = false;
+  const container = $("#search-thinking");
+  if (container) { container.hidden = true; container.innerHTML = ""; }
+}
+
+function beginSearchThinking() {
+  cancelSearchRequest();
+  hideSearchThinking();
+  hideAssistPlan();
+  setCopyAllIds([]);
+  $("#result-count").textContent = "";
+  $("#result-timing").textContent = "";
+  const controller = new AbortController();
+  state.searchAbort = controller;
+  renderSearchThinking({model: state.model, thinking: [], streaming: true});
+  return {reqId: state.lastReq, controller};
+}
+
+function renderSearchThinking(debug, elapsedMs) {
+  const container = $("#search-thinking");
+  if (!container) return;
+  const scroll = container.querySelector(".tutor-thinking-body")?.scrollTop || 0;
+  const thinking = Array.isArray(debug.thinking) ? [...debug.thinking] : [];
+  if (debug.error) thinking.push({type: "error", text: String(debug.error)});
+  state.searchDebug = {...debug, thinking, total_ms: debug.total_ms || Number(elapsedMs) || 0};
+  container.hidden = false;
+  container.innerHTML = renderTutorThinking(state.searchDebug, state.searchThinkingOpen);
+  const body = container.querySelector(".tutor-thinking-body");
+  if (body) body.scrollTop = scroll;
+  const panel = container.querySelector("details");
+  panel?.addEventListener("toggle", () => {
+    if (panel.isConnected) state.searchThinkingOpen = panel.open;
+  });
+  if (debug.screen_errors?.length) {
+    container.insertAdjacentHTML("beforeend", '<div class="search-thinking-warning">Some screening batches failed. These results may be incomplete; expand Thinking for details.</div>');
+  }
+}
+
+function applySearchEvent(event) {
+  const debug = state.searchDebug;
+  if (!debug) return;
+  if (event.event === "reasoning_delta") {
+    const previous = debug.thinking.find((step) => step.type === "reasoning" &&
+      step.phase === event.phase && step.batch === event.batch && step.iteration === event.iteration);
+    if (previous) previous.text += event.text || "";
+    else debug.thinking.push({type: "reasoning", text: event.text || "",
+      phase: event.phase, batch: event.batch, iteration: event.iteration});
+  } else if (event.event === "tool") {
+    debug.thinking.push(event.step);
+  }
+}
+
+function renderSearchProgress() {
+  const container = $("#search-thinking");
+  const body = container?.querySelector(".tutor-thinking-body");
+  if (!body || !state.searchDebug) return;
+  const scroll = body.scrollTop;
+  const follow = body.scrollHeight - scroll - body.clientHeight < 30;
+  body.innerHTML = renderTutorThinkingBody(state.searchDebug);
+  body.scrollTop = follow ? body.scrollHeight : scroll;
+}
+
+async function readSearchResponse(response, reqId) {
+  let timer = null;
+  try {
+    const data = response.headers?.get("content-type")?.includes("text/event-stream")
+      ? await readTutorStream(response, (event) => {
+          if (reqId !== state.lastReq || state.mode !== "fast") return;
+          applySearchEvent(event);
+          if (timer === null) timer = setTimeout(() => {
+            timer = null;
+            if (reqId === state.lastReq && state.mode === "fast") renderSearchProgress();
+          }, 50);
+        })
+      : await response.json();
+    if (data.error) data.debug = {...(data.debug || state.searchDebug), streaming: false,
+      error: data.debug?.error || data.error};
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function setCopyAllIds(ids) {
   state.lastIds = (ids || []).filter((x) => x != null && x !== "");
   const btn = $("#copy-all-ids");
   if (!btn) return;
   btn.hidden = state.lastIds.length === 0;
   btn.textContent = state.lastIds.length
-    ? `Copy all IDs (${state.lastIds.length})`
-    : "Copy all IDs";
+    ? `Copy Anki search (${state.lastIds.length})`
+    : "Copy Anki search";
 }
 
 function hideAssistPlan() {
@@ -750,9 +943,18 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, max) + "px";
 }
 
-function resetTutor() {
-  state.tutorMessages = [];
+function cancelTutorRequest() {
+  ++state.lastReq;
+  state.tutorAbort?.abort();
+  state.tutorAbort = null;
   state.tutorPending = false;
+  state.tutorLive = null;
+}
+
+function resetTutor() {
+  cancelTutorRequest();
+  $("#image-viewer").close();
+  state.tutorMessages = [];
   if (state.mode === "tutor") {
     renderTutorMessages();
     const input = $("#tutor-input");
@@ -767,6 +969,11 @@ function resetTutor() {
 function renderTutorMessages() {
   const list = $("#tutor-messages");
   if (!list) return;
+  const previousScroll = list.scrollTop;
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const thinkingScroll = new Map(Array.from(list.querySelectorAll(".tutor-thinking-body"),
+    (body) => [body.parentElement.dataset.messageIndex, body.scrollTop]));
+  renderTutorSources();
   if (!state.tutorMessages.length && !state.tutorPending) {
     list.innerHTML = `
       <div class="tutor-empty">
@@ -785,23 +992,27 @@ function renderTutorMessages() {
   for (let i = 0; i < state.tutorMessages.length; i++) {
     const m = state.tutorMessages[i];
     const isLatest = !state.tutorPending && i === lastIdx;
-    parts.push(renderTutorBubble(m.role, m.content, isLatest, m.sources));
+    parts.push(renderTutorBubble(m.role, m.content, isLatest, m.sources, m.debug, m.thinkingOpen, i));
   }
   if (state.tutorPending) {
-    parts.push(`
-      <div class="tutor-msg tutor-msg-assistant tutor-msg-latest">
-        <div class="tutor-bubble">
-          <div class="tutor-typing"><span></span><span></span><span></span></div>
-        </div>
-      </div>
-    `);
+    const live = state.tutorLive;
+    parts.push(renderTutorBubble("assistant", live?.content || "", true, [],
+      live?.debug, live?.thinkingOpen, state.tutorMessages.length, true));
   }
   list.innerHTML = parts.join("");
-  renderTutorSources();
   wireTutorCitations(list);
+  list.querySelectorAll(".tutor-thinking").forEach((panel) => {
+    const index = Number(panel.dataset.messageIndex);
+    const message = state.tutorMessages[index] || state.tutorLive;
+    const body = panel.querySelector(".tutor-thinking-body");
+    if (body) body.scrollTop = thinkingScroll.get(panel.dataset.messageIndex) || 0;
+    panel.addEventListener("toggle", () => {
+      if (panel.isConnected && message) message.thinkingOpen = panel.open;
+    });
+  });
   if (state.tutorPending) {
     // While the answer is loading, keep the question + typing dots in view.
-    list.scrollTop = list.scrollHeight;
+    list.scrollTop = nearBottom && !state.tutorLive?.thinkingOpen ? list.scrollHeight : previousScroll;
   } else {
     // Pin the top of the latest message to the top of the viewport so the
     // reader starts at the beginning of a long answer instead of its end.
@@ -819,9 +1030,13 @@ function renderTutorMessages() {
   }
 }
 
-function renderTutorBubble(role, content, isLatest = false, sources) {
+function renderTutorBubble(role, content, isLatest = false, sources, debug, thinkingOpen = false, messageIndex = 0, streaming = false) {
   let body;
-  if (role === "assistant") {
+  if (streaming) {
+    // Incomplete Markdown and citations become interactive only on completion.
+    body = `<div class="tutor-stream-answer">${escapeHtml(content)}</div>
+      <div class="tutor-typing" aria-label="Generating answer"><span></span><span></span><span></span></div>`;
+  } else if (role === "assistant") {
     // Protect [N] refs as placeholders BEFORE markdown parsing, render, then
     // swap them for pills. Doing it after marked let adjacent refs like
     // [1][2] be parsed as reference-links and silently collapse to empty
@@ -835,10 +1050,64 @@ function renderTutorBubble(role, content, isLatest = false, sources) {
   const cls = role === "assistant" ? "tutor-msg-assistant" : "tutor-msg-user";
   const latestCls = isLatest ? " tutor-msg-latest" : "";
   return `
-    <div class="tutor-msg ${cls}${latestCls}">
-      <div class="tutor-bubble">${body}</div>
+    <div class="tutor-msg ${cls}${latestCls}"${streaming ? " data-tutor-live" : ""}>
+      <div class="tutor-bubble">${role === "assistant" ? renderTutorThinking(debug, thinkingOpen, messageIndex) : ""}${body}</div>
     </div>
   `;
+}
+
+function renderTutorThinking(debug, open = false, messageIndex = 0) {
+  if (!debug) return "";
+  return `<details class="tutor-thinking" data-message-index="${messageIndex}"${open ? " open" : ""}>
+    <summary><span>Thinking</span><span class="tutor-thinking-meta">${tutorThinkingMeta(debug)}</span></summary>
+    <div class="tutor-thinking-body">${renderTutorThinkingBody(debug)}</div>
+  </details>`;
+}
+
+function tutorThinkingMeta(debug) {
+  const elapsed = Number(debug.total_ms);
+  const duration = Number.isFinite(elapsed) && elapsed > 0 ? `${(elapsed / 1000).toFixed(1)}s` : "";
+  const retries = Number(debug.response_retries) || 0;
+  return [debug.streaming ? "Generating…" : duration, retries ? `${retries} ${retries === 1 ? "retry" : "retries"}` : ""].filter(Boolean).join(" · ");
+}
+
+function renderTutorThinkingBody(debug) {
+  const steps = Array.isArray(debug.thinking) ? debug.thinking : [];
+  const hasReasoning = steps.some((step) => step.type === "reasoning");
+  const retries = Number(debug.response_retries) || 0;
+  const labels = { reasoning: "Reasoning", tool: "Deck activity", retry: "Retry", error: "Failed attempt" };
+  const items = steps.map((step) => {
+    const kind = Object.hasOwn(labels, step.type) ? step.type : "tool";
+    const attempt = retries ? ` · Attempt ${Number(step.attempt) || 1}` : "";
+    const phase = {plan: "Search planning", screen: "Screening"}[step.phase] || "";
+    const batch = step.batch ? ` · Batch ${Number(step.batch)}` : "";
+    return `<li class="tutor-thinking-step tutor-thinking-${kind}">
+      <div class="tutor-thinking-label">${labels[kind]}${attempt}${phase ? ` · ${phase}` : ""}${batch}</div>
+      <div class="tutor-thinking-text">${escapeHtml(String(step.text || ""))}</div>
+    </li>`;
+  }).join("");
+  return `
+      <div class="tutor-thinking-caption">${escapeHtml(String(debug.model || "Model"))} · Reasoning and activity</div>
+      ${hasReasoning ? "" : `<div class="tutor-thinking-unavailable">${debug.streaming ? "No reasoning text received yet." : "The model did not return reasoning text for this reply."}</div>`}
+      ${items ? `<ol class="tutor-thinking-steps">${items}</ol>` : ""}
+  `;
+}
+
+function renderTutorProgress() {
+  const live = state.tutorLive;
+  const list = $("#tutor-messages");
+  const bubble = list?.querySelector("[data-tutor-live] .tutor-bubble");
+  if (!live || !bubble) return;
+  const follow = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  // Keep the disclosure and its focus stable while updating only its contents.
+  bubble.querySelector(".tutor-stream-answer").textContent = live.content;
+  bubble.querySelector(".tutor-thinking-meta").textContent = tutorThinkingMeta(live.debug);
+  const body = bubble.querySelector(".tutor-thinking-body");
+  const scroll = body.scrollTop;
+  const followThought = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
+  body.innerHTML = renderTutorThinkingBody(live.debug);
+  body.scrollTop = followThought ? body.scrollHeight : scroll;
+  if (follow && !live.thinkingOpen) list.scrollTop = list.scrollHeight;
 }
 
 // Citation placeholders use private-use-area sentinels so `marked` passes
@@ -899,15 +1168,15 @@ function renderTutorSources() {
   if (!shell || !rail || !listEl) return;
 
   let latest = null;
-  for (let i = state.tutorMessages.length - 1; i >= 0; i--) {
+  for (let i = state.tutorMessages.length - 1; !state.tutorPending && i >= 0; i--) {
     const m = state.tutorMessages[i];
-    if (m.role === "assistant" && m.sources && m.sources.length) {
+    if (m.role === "assistant") {
       latest = m;
       break;
     }
   }
 
-  if (!latest) {
+  if (!latest?.sources?.length) {
     shell.classList.remove("has-sources");
     rail.hidden = true;
     listEl.innerHTML = "";
@@ -941,6 +1210,61 @@ function renderTutorMarkdown(md, sources) {
   return markdownishToHtml(md, sources);
 }
 
+async function readTutorStream(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n");
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const lines = frame.split("\n");
+        const payload = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+        if (!payload) continue; // Heartbeat comment.
+        const name = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
+        const event = { ...JSON.parse(payload), event: name };
+        if (name === "done" || name === "error") return event;
+        onEvent(event);
+      }
+      if (done) throw new Error("The response stream ended before the answer finished. Please try again.");
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+function applyTutorEvent(event) {
+  const live = state.tutorLive;
+  if (!live) return;
+  const debug = live.debug;
+  const attempt = Number(event.attempt) || 1;
+  if (event.event === "attempt") {
+    live.content = "";
+    debug.model = event.model;
+    debug.response_retries = attempt - 1;
+  } else if (event.event === "round" || event.event === "answer_reset") {
+    live.content = "";
+  } else if (event.event === "answer_delta") {
+    live.content += event.text || "";
+  } else if (event.event === "reasoning_delta") {
+    const previous = debug.thinking.at(-1);
+    if (previous?.type === "reasoning" && previous.attempt === attempt && previous.iteration === event.iteration) {
+      previous.text += event.text || "";
+    } else {
+      debug.thinking.push({type: "reasoning", text: event.text || "", iteration: event.iteration, attempt});
+    }
+  } else if (event.event === "tool" || event.event === "retry") {
+    debug.thinking.push({...event.step, attempt});
+    if (event.event === "retry") live.content = "";
+  }
+}
+
 async function submitTutor() {
   if (state.tutorPending) return;
   const input = $("#tutor-input");
@@ -951,41 +1275,81 @@ async function submitTutor() {
   input.value = "";
   autoGrow(input);
   state.tutorPending = true;
+  state.tutorLive = {content: "", thinkingOpen: false, debug: {
+    model: state.model, streaming: true, thinking: [], response_retries: 0,
+  }};
   renderTutorMessages();
 
   const reqId = ++state.lastReq;
+  const controller = new AbortController();
+  state.tutorAbort = controller;
+  let renderTimer = null;
+  const renderProgress = (event) => {
+    if (reqId !== state.lastReq || state.mode !== "tutor") return;
+    applyTutorEvent(event);
+    if (renderTimer === null) renderTimer = setTimeout(() => {
+      renderTimer = null;
+      if (reqId === state.lastReq && state.mode === "tutor") renderTutorProgress();
+    }, 50);
+  };
+  // Only conversation text belongs in the next model request. UI errors and
+  // source-card HTML are display state, not earlier tutor answers.
+  const messages = state.tutorMessages
+    .filter((m) => !m.error)
+    .map(({ role, content }) => ({ role, content }));
   try {
     const res = await fetch("/api/tutor", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: state.tutorMessages, deck: state.deck }),
+      signal: controller.signal,
+      body: JSON.stringify({ messages, deck: state.deck, model: state.model, stream: true }),
     });
-    const data = await res.json();
+    const data = res.headers?.get("content-type")?.includes("text/event-stream")
+      ? await readTutorStream(res, renderProgress) : await res.json();
     if (reqId !== state.lastReq || state.mode !== "tutor") return;
+    clearTimeout(renderTimer);
     state.tutorPending = false;
+    const thinkingOpen = state.tutorLive?.thinkingOpen;
+    const liveDebug = state.tutorLive?.debug;
+    if (liveDebug) liveDebug.streaming = false;
+    state.tutorLive = null;
     if (data.error) {
       state.tutorMessages.push({
         role: "assistant",
         content: `_Error: ${data.error}_`,
         sources: [],
+        error: true,
+        debug: data.debug || liveDebug,
+        thinkingOpen,
       });
     } else {
       state.tutorMessages.push({
         role: "assistant",
         content: data.answer || "(no response)",
         sources: data.sources || [],
+        debug: data.debug,
+        thinkingOpen,
       });
     }
     renderTutorMessages();
     input.focus();
   } catch (e) {
-    if (reqId !== state.lastReq) return;
+    if (reqId !== state.lastReq || state.mode !== "tutor" || e.name === "AbortError") return;
     state.tutorPending = false;
+    const debug = state.tutorLive?.debug;
+    if (debug) debug.streaming = false;
+    state.tutorLive = null;
     state.tutorMessages.push({
       role: "assistant",
       content: `_Network error: ${String(e)}_`,
+      sources: [],
+      error: true,
+      debug,
     });
     renderTutorMessages();
+  } finally {
+    clearTimeout(renderTimer);
+    if (reqId === state.lastReq) state.tutorAbort = null;
   }
 }
 
@@ -1087,6 +1451,7 @@ function renderNote(note, opts = {}) {
   // Anki's numeric note id (searchable as nid:<id>). Fall back to the guid
   // for TSV-sourced decks, which carry no note id.
   const noteId = note.nid ? String(note.nid) : (note.guid || "");
+  const ankiSearch = note.nid ? `nid:${noteId}` : noteId;
 
   el.innerHTML = `
     <header class="note-header">
@@ -1094,7 +1459,8 @@ function renderNote(note, opts = {}) {
         ${refBadge}
         <span class="guid-label">Note ID</span>
         <span class="guid">${escapeHtml(noteId)}</span>
-        <button class="copy-btn" type="button" data-copy="${escapeHtml(noteId)}">Copy</button>
+        <button class="copy-btn" type="button" data-copy="${escapeHtml(ankiSearch)}"
+                title="${note.nid ? "Copy a ready-to-paste Anki search" : "Copy note GUID"}">Copy</button>
       </div>
       <span class="score">${escapeHtml(score)}</span>
     </header>
@@ -1106,6 +1472,36 @@ function renderNote(note, opts = {}) {
     ${note.back_html ? `<div class="note-back">${note.back_html}</div>` : ""}
     ${extrasBlock}
   `;
+
+  el.querySelectorAll(".note-front img, .note-back img, .note-extras img").forEach((img) => {
+    img.classList.add("note-image-expandable");
+    img.tabIndex = 0;
+    img.setAttribute("role", "button");
+    img.setAttribute("aria-label", img.alt ? `Expand image: ${img.alt}` : "Expand card image");
+    img.setAttribute("aria-haspopup", "dialog");
+    img.title = img.title ? `${img.title} — Click to expand` : "Click to expand";
+    img.addEventListener("click", (event) => {
+      // Some cards wrap images in links; expanding should keep the card open.
+      event.preventDefault();
+      event.stopPropagation();
+      openCardImage(img);
+    });
+    img.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        event.stopPropagation();
+        openCardImage(img);
+      }
+    });
+    const showUnavailable = () => {
+      const message = document.createElement("span");
+      message.className = "note-image-unavailable";
+      message.textContent = img.alt ? `Image unavailable: ${img.alt}` : "Image unavailable";
+      img.replaceWith(message);
+    };
+    img.addEventListener("error", showUnavailable, { once: true });
+    if (!img.getAttribute("src") || (img.complete && !img.naturalWidth)) showUnavailable();
+  });
 
   // Copy button
   const copyBtn = el.querySelector(".copy-btn");
@@ -1162,8 +1558,10 @@ function renderNote(note, opts = {}) {
 const COLLAPSE_PX = 240;
 function installEllipsisFold(el) {
   if (!el) return;
-  requestAnimationFrame(() => {
-    if (el.scrollHeight <= COLLAPSE_PX + 24) return;
+  let installed = false;
+  const measure = () => requestAnimationFrame(() => {
+    if (installed || el.scrollHeight <= COLLAPSE_PX + 24) return;
+    installed = true;
     el.classList.add("collapsible", "collapsed");
     el.style.setProperty("--collapse-px", COLLAPSE_PX + "px");
     const toggle = document.createElement("button");
@@ -1176,6 +1574,12 @@ function installEllipsisFold(el) {
     });
     el.after(toggle);
   });
+  measure();
+  el.querySelectorAll("img").forEach((img) => {
+    img.addEventListener("load", measure, { once: true });
+  });
+  const details = el.closest("details");
+  if (details) details.addEventListener("toggle", measure);
 }
 
 function renderSnippets(note) {

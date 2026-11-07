@@ -30,6 +30,11 @@ _DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
 }
 
+GROQ_MODELS = {
+    "openai/gpt-oss-120b": "GPT-OSS 120B",
+    "qwen/qwen3.8-27b": "Qwen 3.8 27B",
+}
+
 _GROQ_CLIENT = None
 _OPENAI_CLIENT = None
 _GROQ_ASYNC_CLIENT = None
@@ -45,11 +50,23 @@ def get_provider() -> str:
     return p
 
 
-def get_model() -> str:
+def get_model(selected: str | None = None) -> str:
+    if selected is not None:
+        if not isinstance(selected, str) or selected not in available_models():
+            raise ValueError("Unsupported model; choose a model from the model picker.")
+        return selected
     explicit = (os.environ.get("LLM_MODEL") or "").strip()
     if explicit:
         return explicit
     return _DEFAULT_MODELS[get_provider()]
+
+
+def available_models() -> dict[str, str]:
+    """Choices for the current provider, preserving a configured custom model."""
+    models = dict(GROQ_MODELS) if get_provider() == "groq" else {}
+    default = get_model()
+    models.setdefault(default, default)
+    return models
 
 
 def get_client():
@@ -81,7 +98,7 @@ def get_client():
 
 def supports_reasoning_effort(model: str | None = None) -> bool:
     m = (model or get_model()).lower()
-    return any(h in m for h in _REASONING_HINTS)
+    return m == "qwen/qwen3.8-27b" or any(h in m for h in _REASONING_HINTS)
 
 
 def reasoning_kwargs(model: str | None = None) -> dict:
@@ -90,6 +107,17 @@ def reasoning_kwargs(model: str | None = None) -> dict:
         return {}
     val = (os.environ.get("LLM_REASONING_EFFORT") or "low").strip() or "low"
     return {"reasoning_effort": val}
+
+
+def reasoning_output_kwargs(model: str) -> dict:
+    """Ask supported Groq models to return reasoning separately from answers."""
+    if get_provider() != "groq":
+        return {}
+    if model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+        return {"include_reasoning": True}
+    if model == "qwen/qwen3.8-27b":
+        return {"reasoning_format": "parsed"}
+    return {}
 
 
 # Module-level constants for places that import a `MODEL` name (preserves the

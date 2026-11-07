@@ -1,143 +1,50 @@
 # Anki Agent
 
-**Ask your Anki deck questions and get answers backed by your own cards.**
+Search your Anki cards and ask a tutor questions with links back to your deck.
 
-Anki Agent sits on top of the deck you already study — the AnKing Step deck, or any
-other — and turns it into something you can *talk to*:
+## Install on a Mac
 
-- 🔎 **Search** your deck instantly by keyword, topic, or tag.
-- ✨ **AI search** — type what you want in plain English ("high-yield cards on a
-  topic") and let it find the right cards.
-- 🎓 **Tutor** — a study buddy that explains concepts and shows you the exact
-  cards behind every point, so you can trust (and review) what it says.
+**[Read the step-by-step Mac setup guide](docs/MAC_SETUP.md)** — written for people who do not code.
 
-Everything is grounded in *your* deck, so the answers match what you're actually
-expected to know — no made-up facts, and every claim links back to a card.
+The Mac app includes everything it needs to run. You do not need Python, Terminal, or an `.env` file.
 
-> Your Anki data is read **read-only**. Anki Agent never edits, moves, or syncs your
-> cards. It's safe to use whether Anki is open or closed.
+You will need:
 
----
+- **Anki on this Mac**, with the cards you want to study already downloaded or synced.
+- **An internet connection** for the tutor and AI search.
+- **Your own Groq API key**, created through [Groq](https://console.groq.com/keys). The guide explains how to do this.
 
-## What you'll need
+### 1. Download and open
 
-1. **Anki** installed, with the deck you study (e.g. the AnKing Step deck).
-2. **Python 3.10 or newer** — check by running `python --version` in a terminal.
-   ([Download here](https://www.python.org/downloads/) if you don't have it.)
-3. **A free Groq API key** for the AI features — sign up at
-   [console.groq.com](https://console.groq.com/) and create a key (starts with `gsk_`).
+Open the [Downloads / Releases page](https://github.com/ajy25/anki-agent/releases). Under **Assets**, download the **Apple silicon (`arm64`) `.dmg`**. The current preview supports Apple silicon Macs only. Avoid **Source code (zip)** and **Source code (tar.gz)**; those are for developers.
 
-You do **not** need to know how to code. The steps below are copy-paste.
+**Download status:** version **1.3.1** has been built locally for **Apple silicon** (`arm64`), but no GitHub release has been published yet. If the Releases page has no downloads, ask the maintainer for `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`. An Intel installer is not currently available here.
 
----
+Double-click the `.dmg`, drag **Anki Agent** onto **Applications**, then open **Anki Agent** from Applications.
 
-## Setup (about 5 minutes)
+The preview has not been notarized by Apple. If macOS blocks it because the developer cannot be verified, follow the guide's [first-open instructions](docs/MAC_SETUP.md#if-macos-blocks-the-first-open).
 
-Open a terminal, then go to this project's folder:
+### 2. Complete the setup screen
 
-```bash
-cd path/to/anki-agent
-```
+1. Click **Create a Groq API key**, sign in, create a key, and copy it.
+2. Return to Anki Agent, paste it into **Connect Groq**, and click **Test key**.
+3. Under **Choose your Anki profile**, select the profile containing your cards.
+4. Under **Pick the deck you want to study**, choose your deck. Choosing a parent deck includes its subdecks.
+5. Click **Save & open deck**. Leave the window open while it says **Preparing your deck…**; the tutor opens when it is ready.
 
-### 1. Install
+For help choosing the correct download, finding your deck, or fixing a setup error, use the **[full Mac setup guide](docs/MAC_SETUP.md)**.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+## Use the app
 
-### 2. Tell it about your deck and key
+- **Search:** find cards by keyword or tag. Turn on **AI assist** or use **Deep search** for a natural-language search.
+- **Tutor:** ask a question, watch the answer appear, and click its citations to inspect the source cards.
+- **Thinking:** expand this panel to see model-returned reasoning and deck-search activity when available.
+- **Change your key or deck:** click **Setup**, or choose **Settings → API key & Anki deck…** in the Mac menu bar.
 
-Copy the example settings file, then open `.env` in any text editor and fill it in:
+Your Anki collection is read without changing it. Your key is saved in **macOS Keychain**. AI requests send your questions and relevant card text to **Groq**. Check AI answers against your cards; they can make mistakes.
 
-```bash
-cp .env.example .env
-```
+## Other instructions
 
-You only need to set two things (the file explains each one):
-
-- **`GROQ_API_KEY`** — your key from console.groq.com.
-- **`DECK_PATH`** — where your Anki collection lives. On most Macs it's already
-  filled in correctly:
-  `~/Library/Application Support/Anki2/User 1/collection.anki2`
-  (change `User 1` if your Anki profile has a different name).
-
-Optionally set **`DECK_NAME`** to study one deck — type it exactly as it appears
-in Anki's deck list (e.g. `AnKing Step Deck`). Leave it blank to include
-everything.
-
-> 💡 Not sure of your deck's name? Just run the app (next step) — if the name
-> doesn't match, it prints the list of decks it found so you can copy the right one.
-
-### 3. Run it
-
-```bash
-python run.py
-```
-
-Then open **http://127.0.0.1:5050** in your browser. The first launch spends a
-few seconds indexing your deck; after that it's instant.
-
-That's it — start searching or switch to **Tutor** and ask a question.
-
----
-
-## Using it day to day
-
-- **Switch modes** with the tabs at the top: Search · Tutor.
-- The deck you're studying is shown as a pill next to the title.
-- In **Search**, click any tag in the sidebar to filter, or flip on **AI assist**
-  to search in plain English.
-- In **Tutor**, every answer cites the cards it used — click a citation to jump
-  to that card.
-
-**Your deck changed?** Anki Agent re-indexes automatically the next time you start it.
-To force a refresh without restarting:
-
-```bash
-python -m ankiagent.ingest --force
-```
-
-**Want a quick-access window instead of a browser tab?** (macOS) Run
-`python launcher.py` to get a floating window you summon with a global hotkey
-(default **Ctrl+Alt+Space**).
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-| --- | --- |
-| `DECK_PATH is not set` | You haven't created `.env` yet, or `DECK_PATH` is blank. See step 2. |
-| `No Anki deck named '…'` | The `DECK_NAME` doesn't match. The error lists the real deck names — copy one in. |
-| `Deck file not found` | Double-check `DECK_PATH`. Replace `User 1` with your actual Anki profile name. |
-| AI features error out | Check your `GROQ_API_KEY` is correct and your internet is on. |
-| It only shows text, no images | That's expected — Anki Agent indexes the text of your cards, not images or audio. |
-
----
-
-## For the curious (how it works)
-
-Anki Agent reads your Anki collection (a local database), builds a fast search index
-of your cards' text and tags, and serves a small web app. The AI features call
-Groq and use tools to look through *your* deck before answering, so nothing is
-hard-coded to any one deck.
-
-```
-run.py            Start the browser app
-launcher.py       Start the desktop hotkey window (macOS)
-ankiagent/          The app
-  app.py            Web server + API
-  ingest.py         Builds the search index from your deck
-  parse.py          Reads your Anki collection / TSV export
-  search.py         Keyword + tag search
-  llm.py            AI search and tutor
-  llm_client.py     Talks to Groq / OpenAI
-  templates/        Web page
-  static/           Styles + scripts
-```
-
-Advanced users: Anki Agent can also read a TSV export (`.txt`) instead of the live
-collection — just point `DECK_PATH` at it. All settings are documented in
-[`.env.example`](.env.example).
+- [Mac setup, updates, and troubleshooting](docs/MAC_SETUP.md)
+- [Run or develop the source code](docs/DEVELOPMENT.md)
+- [Build and publish Mac downloads — for maintainers](packaging/README.md)

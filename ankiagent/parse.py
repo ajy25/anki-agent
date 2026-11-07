@@ -8,7 +8,7 @@ The deck file is a tab-separated export from Anki:
   - Fields 1..17 contain HTML with cloze deletions and Anki-specific markup.
 
 We also expose helpers to clean HTML for full-text search and to render
-display HTML with images stripped.
+display HTML with images preserved.
 """
 
 from __future__ import annotations
@@ -114,9 +114,8 @@ def html_to_text(s: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-# Tags allowed when rendering note HTML. We DROP <img> entirely (per user request)
-# and strip scripts/styles. Bleach is applied later for safety; this list is the
-# whitelist passed to bleach in app.py.
+# Tags allowed when rendering note HTML. Bleach is applied later for safety;
+# image sources are rewritten to the media endpoint before presentation.
 DISPLAY_ALLOWED_TAGS = {
     "a", "b", "i", "em", "strong", "u", "s", "sub", "sup",
     "div", "span", "p", "br", "hr",
@@ -124,27 +123,27 @@ DISPLAY_ALLOWED_TAGS = {
     "table", "thead", "tbody", "tr", "th", "td",
     "h1", "h2", "h3", "h4", "h5", "h6",
     "blockquote", "code", "pre",
-    "mark",
+    "mark", "img",
 }
 DISPLAY_ALLOWED_ATTRS = {
     "a": ["href", "title"],
     "span": ["class"],
     "div": ["class"],
     "mark": ["data-cloze"],
+    "img": ["src", "alt", "title", "width", "height", "loading", "decoding"],
 }
 
 
 def render_html(s: str) -> str:
     """Convert raw Anki HTML to display HTML.
 
-    - Strip <img> and <audio> entirely.
+    - Preserve <img>; strip <audio> entirely.
     - Convert cloze {{c1::X}} -> <mark data-cloze="1">X</mark>.
     - Drop [sound:...] tokens.
     - Leave other tags for downstream sanitization (bleach in app.py).
     """
     if not s:
         return ""
-    s = re.sub(r"<img\b[^>]*>", "", s, flags=re.IGNORECASE)
     s = re.sub(r"<audio\b[^>]*>.*?</audio>", "", s, flags=re.IGNORECASE | re.DOTALL)
     s = re.sub(r"<source\b[^>]*>", "", s, flags=re.IGNORECASE)
     s = SOUND_RE.sub("", s)
@@ -261,15 +260,16 @@ def _open_anki_collection(path: str | Path) -> tuple[sqlite3.Connection, Path]:
     return con, tmpdir
 
 
-def list_anki_decks(path: str | Path) -> list[str]:
+def list_anki_decks(path: str | Path, *, include_subdecks: bool = False) -> list[str]:
     """Return the distinct top-level deck names in a collection (for messages)."""
     con, tmpdir = _open_anki_collection(path)
     try:
         roots = {
-            r["name"].split(_ANKI_FIELD_SEP, 1)[0]
+            r["name"].replace(_ANKI_FIELD_SEP, "::") if include_subdecks else r["name"].split(_ANKI_FIELD_SEP, 1)[0]
             for r in con.execute("SELECT name FROM decks")
         }
-        roots.discard("Default")
+        if not include_subdecks:
+            roots.discard("Default")
         return sorted(roots)
     finally:
         con.close()

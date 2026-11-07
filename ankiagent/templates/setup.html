@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="setup-token" content="{{ token }}">
+  <title>Set up Anki Agent</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='setup.css') }}">
+</head>
+<body>
+  <main class="setup-shell">
+    <header class="pywebview-drag-region"><a class="brand" href="/"><span>Ω</span> Anki Agent</a><span class="local-label">Made for your own deck</span></header>
+    <h1>Set up Anki Agent</h1>
+    <p class="intro">Add your API key, choose your Anki profile, and pick a deck.</p>
+    <div id="status" role="status" aria-live="polite" hidden></div>
+    <form id="setup-form">
+      <fieldset id="setup-fields">
+        <section class="setup-card">
+          <div class="step">1</div><div class="card-content">
+            <label for="api-key">Connect Groq</label>
+            <p>Your key connects the tutor and AI search. <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Create a Groq API key ↗</a></p>
+            <div class="input-row"><input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your gsk_… API key" aria-describedby="key-help"><button id="show-key" type="button" aria-label="Show API key">Show</button><button id="test-key" type="button">Test key</button></div>
+            <small id="key-help">Saved in macOS Keychain. Your key is never included in the app download.</small>
+            <div id="key-status" class="field-status" role="status"></div>
+          </div>
+        </section>
+        <section class="setup-card">
+          <div class="step">2</div><div class="card-content">
+            <label for="profile">Choose your Anki profile</label>
+            <p>Profiles on this Mac appear automatically.</p>
+            <div class="input-row"><select id="profile"><option value="">Looking for Anki profiles…</option></select><button id="refresh-profiles" type="button">Refresh</button><button id="browse" type="button" hidden>Browse…</button></div>
+            <small id="profile-help"></small>
+            <details class="manual"><summary>Use a collection in a different location</summary><label class="sr-only" for="collection-path">Collection file path</label><div class="input-row"><input id="collection-path" placeholder="Path to collection.anki2"><button id="use-path" type="button">Use file</button></div></details>
+          </div>
+        </section>
+        <section class="setup-card">
+          <div class="step">3</div><div class="card-content">
+            <label for="deck">Pick the deck you want to study</label>
+            <p>Subdecks are included when you choose their parent deck.</p>
+            <select id="deck" disabled><option>Choose an Anki profile first</option></select>
+            <div id="deck-status" class="field-status" role="status"></div>
+          </div>
+        </section>
+        <label class="optional"><input id="enable-hotkey" type="checkbox"> Enable the global shortcut (Control + Option + Space)</label>
+        <small class="shortcut-help">Optional. You can always open the app from the Dock.</small>
+        <div class="actions"><button id="save" class="primary" type="submit">Save &amp; open deck</button><a id="back" href="/?mode=tutor" hidden>Back to app</a></div>
+      </fieldset>
+    </form>
+    <footer>Your Anki files stay read-only. AI requests send relevant card text to Groq.</footer>
+  </main>
+  <script src="{{ url_for('static', filename='setup.js') }}"></script>
+</body></html>

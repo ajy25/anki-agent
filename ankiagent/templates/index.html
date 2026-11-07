@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Anki Agent · Deck search</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icon.svg') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
 </head>
 <body>
@@ -14,7 +15,18 @@
       <span class="deck-name" id="deck-name" title="Indexed deck" hidden></span>
       <span class="sub" id="stats"></span>
     </div>
-    <div class="mode-toggle pywebview-no-drag" role="tablist" aria-label="Retrieval mode">
+    <label class="model-picker" for="model-select">
+      <span>Model</span>
+      <select id="model-select" title="Model for Tutor, AI assist, and Deep search">
+        {% for model_id, label in models.items() %}
+        <option value="{{ model_id }}"{% if model_id == default_model %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <span class="desktop-model-name" id="desktop-model-name" aria-live="polite"
+          title="Change model in Settings → AI model">{{ models[default_model] }}</span>
+    <a id="setup-settings" class="setup-settings" href="/setup" hidden>Setup</a>
+    <div class="mode-toggle" role="tablist" aria-label="Retrieval mode">
       <button class="mode-btn active" data-mode="fast" role="tab" aria-selected="true" title="Keyword/tag search over the deck (optionally AI-assisted)">
         <span class="mode-dot"></span>Search
         <span class="mode-sub">deck</span>
@@ -61,6 +73,7 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-section" id="deck-section" hidden>
         <h3>Decks</h3>
+        <p class="deck-count-label">Unique notes, including subdecks</p>
         <div id="deck-tree" class="deck-tree"></div>
       </div>
       <h3>Top tags</h3>
@@ -73,14 +86,22 @@
         <span class="results-header-right">
           <button id="copy-all-ids" class="copy-all-ids" type="button" hidden
                   title="Copy every result's note ID as an Anki search (nid:1,2,3) — paste into the Anki browser to list them all">
-            Copy all IDs
+            Copy Anki search
           </button>
           <span id="result-timing"></span>
         </span>
       </div>
+      <div id="search-thinking" class="search-thinking" hidden></div>
       <div id="results" class="results"></div>
     </section>
   </main>
+
+  <dialog id="image-viewer" class="image-viewer" aria-label="Expanded card image">
+    <button class="image-viewer-close" type="button" aria-label="Close image viewer" autofocus>
+      <span aria-hidden="true">×</span> Close
+    </button>
+    <img class="image-viewer-image" alt="" />
+  </dialog>
 
   <script src="{{ url_for('static', filename='marked.min.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

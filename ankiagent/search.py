@@ -179,10 +179,10 @@ def parse_query(q: str) -> ParsedQuery:
 _CONN: sqlite3.Connection | None = None
 
 
-def get_conn(db_path: Path = DB_PATH) -> sqlite3.Connection:
+def get_conn(db_path: Path | None = None) -> sqlite3.Connection:
     global _CONN
     if _CONN is None:
-        con = sqlite3.connect(db_path, check_same_thread=False)
+        con = sqlite3.connect(db_path or DB_PATH, check_same_thread=False)
         con.row_factory = sqlite3.Row
         _CONN = con
     return _CONN
@@ -481,15 +481,17 @@ def deck_tree() -> list[dict]:
     """Build the nested deck hierarchy for the sidebar selector.
 
     Returns a list of root nodes, each {path, label, count, children}, where
-    `count` is the inclusive note count (the deck plus all its subdecks). Empty
-    when the source has no deck metadata (e.g. a TSV export).
+    `count` is the number of unique notes in the deck and its subdecks. A
+    note with cards in multiple subdecks is counted once at their parent.
+    Empty when the source has no deck metadata (e.g. a TSV export).
     """
     con = get_conn()
-    exact = {
-        r["deck"]: int(r["count"])
-        for r in con.execute("SELECT deck, count FROM decks")
-        if r["deck"]
-    }
+    exact: dict[str, set[str]] = {}
+    for r in con.execute(
+        "SELECT nd.deck, nd.guid FROM note_decks nd JOIN notes n ON n.guid = nd.guid"
+    ):
+        if r["deck"]:
+            exact.setdefault(r["deck"], set()).add(r["guid"])
     if not exact:
         return []
 
@@ -500,17 +502,18 @@ def deck_tree() -> list[dict]:
         for i in range(1, len(parts) + 1):
             p = "::".join(parts[:i])
             nodes.setdefault(
-                p, {"label": parts[i - 1], "own": 0, "total": 0, "children": set()}
+                p, {"label": parts[i - 1], "guids": set(), "children": set()}
             )
         for i in range(2, len(parts) + 1):
             nodes["::".join(parts[: i - 1])]["children"].add("::".join(parts[:i]))
-    for path, c in exact.items():
-        nodes[path]["own"] = c
+    for path, guids in exact.items():
+        nodes[path]["guids"] = guids
 
-    # Inclusive totals: process deepest paths first so children are ready.
+    # Union identities rather than adding counts: subdecks may share notes.
     for p in sorted(nodes, key=lambda s: s.count("::"), reverse=True):
         n = nodes[p]
-        n["total"] = n["own"] + sum(nodes[c]["total"] for c in n["children"])
+        for child in n["children"]:
+            n["guids"].update(nodes[child]["guids"])
 
     def build(p: str) -> dict:
         n = nodes[p]
@@ -518,7 +521,7 @@ def deck_tree() -> list[dict]:
         return {
             "path": p,
             "label": n["label"],
-            "count": n["total"],
+            "count": len(n["guids"]),
             "children": [build(c) for c in kids],
         }
 
