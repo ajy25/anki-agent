@@ -8,4 +8,6 @@ This preview is not notarized by Apple. The guide explains the per-app **Open An
 
 The ZIP is an alternative app download. The JSON manifest records the version, source revision, architecture, smoke checks, and SHA-256 checksums.
 
+See the [changelog](https://github.com/ajy25/anki-agent/blob/main/CHANGELOG.md) for version history.
+
 <!-- Before publishing: add the macOS version actually tested and the user-visible changes for this release. -->

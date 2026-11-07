@@ -4,7 +4,7 @@
 
 Search your Anki cards and ask a tutor questions with links back to your deck.
 
-**[Visit the website](https://ajy25.github.io/anki-agent/)** for an overview, interactive preview, and Mac setup steps.
+**[Visit the website](https://ajy25.github.io/anki-agent/)** for a recording of the app and Mac download/setup steps.
 
 ## Install on a Mac
 
@@ -49,6 +49,7 @@ Your Anki collection is read without changing it. Your key is saved in **macOS K
 
 ## Other instructions
 
+- [Changelog](CHANGELOG.md)
 - [Mac setup, updates, and troubleshooting](docs/MAC_SETUP.md)
 - [Run or develop the source code](docs/DEVELOPMENT.md)
 - [Automated checks and releases](docs/CI_CD.md)

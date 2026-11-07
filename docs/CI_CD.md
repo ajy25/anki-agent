@@ -4,7 +4,7 @@
 
 Every pull request and push to `main` runs **CI**:
 
-The independent **Website checks** job also tests public download selection, builds the static site, checks internal links, and validates the website's JavaScript. The separate **Website** workflow deploys the site to GitHub Pages; see [website maintenance](WEBSITE.md).
+The independent **Website checks** job also tests public download selection, builds the static site, and checks internal links and demo media files. The separate **Website** workflow deploys the site to GitHub Pages; see [website maintenance](WEBSITE.md).
 
 1. **Tests (macOS):** installs the pinned Mac environment, checks dependencies and the version file, runs the Python suite, checks JavaScript syntax, and runs the browser tests.
 2. **Mac installer:** runs only after the tests pass. Builds the Apple silicon app, verifies its signature, checks that private files are excluded, and smoke-tests setup, indexing, deck changes, and read-only collection access with synthetic data. It then verifies the installer checksums and source revision.
@@ -26,7 +26,7 @@ Workflow artifacts require GitHub access and expire. Share a published **Release
 
 `VERSION` in the repository root is the single source for the app's version, installer filename, and release validation. It contains a number such as `1.3.1`. The PyInstaller spec and build script both read it.
 
-1. Finish the changes on `main`, set `VERSION` to the intended release number, and update `packaging/RELEASE_NOTES.md` with the changes and macOS version actually tested. Update download-availability wording in the README and Mac setup guide as appropriate for publication.
+1. Finish the changes on `main`, set `VERSION` to the intended release number, add an entry at the top of `CHANGELOG.md`, and update `packaging/RELEASE_NOTES.md` with the changes and macOS version actually tested. Update download-availability wording in the README and Mac setup guide as appropriate for publication.
 2. Commit and push those changes. Confirm that **CI** is green for that commit.
 3. Create and push a matching version tag on that commit. For example, if `VERSION` is `1.3.2`:
 

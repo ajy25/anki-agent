@@ -1,12 +1,14 @@
 # GitHub Pages website
 
-The public site is **https://ajy25.github.io/anki-agent/**. It introduces the Mac app, provides an interactive sample using illustrative cards, and links to setup instructions, downloads, and support.
+The public site is **https://ajy25.github.io/anki-agent/**. It is a simple project page with a recording of the running app, download/setup instructions, and links to the changelog and source code.
 
 ## Edit the site
 
 - `site/public/index.html` — page content and layout.
 - `site/public/style.css` — responsive styling.
-- `site/public/app.js` — sample Search/Tutor tabs, sample-card searches, and citations. The website does not run inference or accept API keys.
+- `site/public/demo.mp4` — a short recording of the actual app using a sample deck.
+- `site/public/demo-poster.webp` and `demo.vtt` — a real app screenshot and walkthrough captions.
+- `site/DEMO.md` — recording provenance and update notes.
 - `site/public/icon.svg` — app logo.
 - `site/build.py` — dependency-free Python builder and internal-link checks.
 - `site/test_build.py` — tests for public download selection and build validation.
@@ -29,4 +31,4 @@ GitHub Pages must use **GitHub Actions** as its publishing source. The workflow 
 
 The builder reads GitHub's release metadata during deployment. It selects the newest published release with a matching Apple silicon DMG, including public pre-releases and excluding drafts. Before a public installer exists, it says the first download is coming soon and links to the Releases page. Once an installer is published, the site links directly to that asset. No GitHub API request or token is needed in a visitor's browser.
 
-Website checks also run in CI for pull requests and pushes to `main`. They verify internal anchors, relative asset paths, release selection, and JavaScript syntax. The page uses relative paths so it works under GitHub Pages' `/anki-agent/` project path.
+Website checks also run in CI for pull requests and pushes to `main`. They verify internal anchors, relative asset paths, demo media, and release selection. The site needs no client-side JavaScript; the demo uses the browser's standard video controls. The page uses relative paths so it works under GitHub Pages' `/anki-agent/` project path.

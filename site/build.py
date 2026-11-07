@@ -45,7 +45,7 @@ class Links(HTMLParser):
             if attrs["id"] in self.ids:
                 raise ValueError(f"Duplicate HTML ID: {attrs['id']}")
             self.ids.add(attrs["id"])
-        for attr in ("href", "src"):
+        for attr in ("href", "src", "poster"):
             if attrs.get(attr):
                 self.links.append(attrs[attr])
 
