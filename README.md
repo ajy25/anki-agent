@@ -1,5 +1,7 @@
 # Anki Agent
 
+[![CI](https://github.com/ajy25/anki-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ajy25/anki-agent/actions/workflows/ci.yml)
+
 Search your Anki cards and ask a tutor questions with links back to your deck.
 
 ## Install on a Mac
@@ -47,4 +49,5 @@ Your Anki collection is read without changing it. Your key is saved in **macOS K
 
 - [Mac setup, updates, and troubleshooting](docs/MAC_SETUP.md)
 - [Run or develop the source code](docs/DEVELOPMENT.md)
+- [Automated checks and releases](docs/CI_CD.md)
 - [Build and publish Mac downloads — for maintainers](packaging/README.md)

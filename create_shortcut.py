@@ -116,6 +116,7 @@ def create_shortcut() -> Path:
     contents = app / "Contents"
     executable = contents / "MacOS" / APP_NAME
     executable.parent.mkdir(parents=True, exist_ok=True)
+    version = (ROOT / "VERSION").read_text().strip()
     config = {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
@@ -124,8 +125,8 @@ def create_shortcut() -> Path:
         "CFBundleIdentifier": "org.ankiagent.desktop.native",
         "CFBundleExecutable": APP_NAME,
         "CFBundlePackageType": "APPL",
-        "CFBundleVersion": "3",
-        "CFBundleShortVersionString": "1.2",
+        "CFBundleVersion": version,
+        "CFBundleShortVersionString": version,
         "CFBundleIconFile": "AppIcon.icns",
         # Script-only app bundles otherwise default to Rosetta on Apple
         # silicon, even when their Python interpreter is native ARM64.

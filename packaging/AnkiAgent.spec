@@ -26,6 +26,6 @@ exe = EXE(pyz, analysis.scripts, [], exclude_binaries=True, name="Anki Agent",
           codesign_identity=identity, entitlements_file=None)
 collection = COLLECT(exe, analysis.binaries, analysis.datas, strip=False, upx=False, name="Anki Agent")
 app = BUNDLE(collection, name="Anki Agent.app", icon=str(root / "packaging" / "AppIcon.icns"),
-             bundle_identifier="org.ankiagent.desktop", version="1.3.1",
+             bundle_identifier="org.ankiagent.desktop", version=(root / "VERSION").read_text().strip(),
              info_plist={"CFBundleDisplayName": "Anki Agent", "NSHighResolutionCapable": True,
                          "LSMinimumSystemVersion": "12.0", "NSPrincipalClass": "NSApplication"})

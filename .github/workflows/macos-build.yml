@@ -1,31 +1,11 @@
 name: Build Mac downloads
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-15
-            architecture: arm64
-            python_arch: arm64
-          - runner: macos-15-intel
-            architecture: x86_64
-            python_arch: x64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          architecture: ${{ matrix.python_arch }}
-      - name: Install build dependencies
-        run: python -m pip install -r packaging/requirements-macos.txt
-      - name: Build and smoke-test the app
-        run: python packaging/build_macos.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Anki-Agent-macOS-${{ matrix.architecture }}-preview
-          path: dist/*
+  verify-and-build:
+    uses: ./.github/workflows/ci.yml

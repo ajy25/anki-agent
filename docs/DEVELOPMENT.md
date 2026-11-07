@@ -85,6 +85,8 @@ node --test tests/test_tutor_ui.cjs
 
 The JavaScript checks use Node's built-in test runner. Node is for development checks, not a requirement for end users.
 
+Pushes to `main` and pull requests run these suites and build a smoke-tested Mac installer automatically. CI uses Python 3.12, Node 24, and `packaging/requirements-macos.txt`. See [automated checks and releases](CI_CD.md) for the exact checks and tagged-release workflow. Set the app version in the root `VERSION` file.
+
 ## Common source configuration errors
 
 | Problem | Check |

@@ -1,0 +1,62 @@
+name: Mac release draft
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Match tag to VERSION
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 packaging/release_checks.py --tag "$RELEASE_TAG"
+
+  verify-and-build:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  draft:
+    name: Prepare verified release draft
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Anki-Agent-macOS-arm64-preview
+          path: dist
+      - name: Verify downloaded release assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: python3 packaging/release_checks.py --tag "$RELEASE_TAG" --artifacts dist --revision "$SOURCE_REVISION"
+      - name: Create draft with verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          gh release create "$RELEASE_TAG"
+          dist/*.dmg dist/*.zip dist/*.json
+          --verify-tag --draft --prerelease
+          --title "Anki Agent $RELEASE_TAG — Mac preview"
+          --notes-file packaging/RELEASE_NOTES.md

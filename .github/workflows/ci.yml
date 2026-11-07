@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (macOS)
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GROQ_API_KEY: ''
+      OPENAI_API_KEY: ''
+      DECK_PATH: /unused/collection.anki2
+      DECK_NAME: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: packaging/requirements-macos.txt
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install pinned Mac dependencies
+        run: python -m pip install -r packaging/requirements-macos.txt
+      - name: Check dependency compatibility and version
+        run: |
+          python -m pip check
+          python packaging/release_checks.py
+      - name: Run Python tests
+        env:
+          ANKIAGENT_DATA_DIR: ${{ runner.temp }}/ankiagent-tests
+        run: python -m unittest discover -s tests -v
+      - name: Check and test browser code
+        run: |
+          node --check ankiagent/static/app.js
+          node --check ankiagent/static/setup.js
+          node --test tests/test_tutor_ui.cjs
+
+  package:
+    name: Mac installer
+    needs: tests
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: packaging/requirements-macos.txt
+      - name: Install pinned build dependencies
+        run: python -m pip install -r packaging/requirements-macos.txt
+      - name: Build and smoke-test the app
+        run: python packaging/build_macos.py
+      - name: Verify installer manifest and checksums
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: python packaging/release_checks.py --artifacts dist --revision "$SOURCE_REVISION"
+      - name: Save verified Mac downloads
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Anki-Agent-macOS-arm64-preview
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

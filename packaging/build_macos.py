@@ -7,13 +7,14 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import shutil
 import subprocess
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.3.1"
+VERSION = (ROOT / "VERSION").read_text().strip()
 
 
 def run(*args, **kwargs):
@@ -45,6 +46,9 @@ def main():
         run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--workpath", work / "work",
             "--distpath", work / "dist", ROOT / "packaging" / "AnkiAgent.spec", cwd=ROOT)
         app = work / "dist" / "Anki Agent.app"
+        with (app / "Contents" / "Info.plist").open("rb") as stream:
+            if plistlib.load(stream)["CFBundleShortVersionString"] != VERSION:
+                raise RuntimeError("Packaged app version does not match VERSION.")
         forbidden = {".env", "settings.json", "anki.db", "desktop.log", ".git"}
         assert not any(path.name in forbidden for path in app.rglob("*")), "Private files found in app"
         run("/usr/bin/codesign", "--verify", "--deep", "--strict", app)
@@ -100,7 +104,13 @@ def main():
             run("xcrun", "notarytool", "submit", dmg, "--keychain-profile", notary, "--wait")
             run("xcrun", "stapler", "staple", dmg)
             run("spctl", "--assess", "--type", "open", "--context", "context:primary-signature", dmg)
-        manifest = {"version": VERSION, "architecture": suffix, "notarized": bool(notary),
+        try:
+            revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                stderr=subprocess.DEVNULL, text=True).strip()
+        except (OSError, subprocess.CalledProcessError):
+            revision = None
+        manifest = {"version": VERSION, "source_revision": revision,
+                    "architecture": suffix, "notarized": bool(notary),
                     "smoke_test": json.loads(report.read_text()), "files": {}}
         for path in (dmg, archive):
             manifest["files"][path.name] = {"bytes": path.stat().st_size,

@@ -14,6 +14,8 @@ This page is for maintainers. People installing the app should use the **[Mac se
 
 ## Publish a download people can actually install
 
+**Automated path:** follow [Prepare a release](../docs/CI_CD.md#prepare-a-release). A version tag matching the root `VERSION` file runs tests, builds and verifies the installer, then attaches it to a draft pre-release. Review and publish the draft when ready. The steps below also describe how to attach a locally built preview manually.
+
 1. Test the installer on a separate Mac or clean user account, using the [user setup guide](../docs/MAC_SETUP.md). Check the first-open prompts, key entry and testing, profile/deck selection, saving Setup, asking a question, quitting, and reopening with saved settings. Record the actual macOS version and chip tested. Automated package checks do not replace this first-run check.
 2. Open the repository's **[Releases page](https://github.com/ajy25/anki-agent/releases)** and choose **Draft a new release**. Choose the source revision used to build the app and a matching version tag. For this build, use a preview title such as **Anki Agent 1.3.1 — Mac preview** and mark it as a **pre-release**.
 3. Attach these files from `dist/` to the release's assets:
@@ -43,7 +45,7 @@ python packaging/build_macos.py
 
 The output is a standalone `Anki Agent.app` inside a drag-to-Applications DMG, a ZIP of the app, and a JSON manifest containing the architecture, SHA-256 checksums, notarization status, and smoke-test results. Python, native WebKit support, UI assets, and inference dependencies are included. Anki collections, caches, `.env`, settings, and API keys are excluded.
 
-Build the Apple silicon app on an arm64 Mac; do not rename it as universal. The manual **Build Mac downloads** GitHub workflow uploads preview artifacts. Workflow artifacts are build outputs, not a user-facing GitHub Release; inspect and test them, then attach the installers to a release.
+Build the Apple silicon app on an arm64 Mac; do not rename it as universal. Both CI and the manual **Build Mac downloads** workflow run the same tests and upload verified preview artifacts. Tagged releases use those checks to prepare a draft with the assets attached. Workflow artifacts are build outputs, not a user-facing GitHub Release.
 
 The package smoke test runs the built executable with an empty data directory, checks setup routes and packaged assets, indexes a synthetic collection, changes the selected deck, and verifies the original collection is unchanged. It makes no model requests and uses an in-memory test credential rather than Keychain. Test actual first-open behavior and Keychain prompts separately on the intended Mac configurations.
 
@@ -61,4 +63,4 @@ python packaging/build_macos.py --require-notarization
 
 The builder signs the app, submits it to Apple, staples and validates the app's notarization ticket, creates the installer, signs and notarizes the DMG, and checks Gatekeeper assessment. `--require-notarization` fails before building if the signing configuration is absent. This flag selects the notarized build path; it does not prevent distributing a default preview build. Certificates and credentials are never copied into the app. The manifest explicitly records notarization status.
 
-Test each supported architecture before publishing it, and state the macOS versions actually checked. The repository workflow builds previews; it does not publish releases or provision signing credentials.
+Test the installer on the intended Mac configurations before publishing it, and state the macOS versions actually checked. The workflows build previews and prepare release drafts; a maintainer publishes the draft. They do not provision signing credentials.
