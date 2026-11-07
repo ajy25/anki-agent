@@ -1,13 +1,16 @@
 WEBVTT
 
-00:00:00.000 --> 00:00:02.500
-Search your own deck
+00:00:00.000 --> 00:00:02.000
+Search the sample deck for active recall
 
-00:00:02.500 --> 00:00:05.033
-Switch to Tutor and ask a question
+00:00:02.000 --> 00:00:05.581
+Ask the tutor for an explanation with card citations
 
-00:00:05.033 --> 00:00:10.069
-Watch the real answer stream from Groq
+00:00:05.581 --> 00:00:08.590
+The answer includes a clickable card citation
 
-00:00:10.069 --> 00:00:14.806
-Open Thinking to inspect the model and deck activity
+00:00:08.590 --> 00:00:13.497
+Click [1] to highlight the matching source card
+
+00:00:13.497 --> 00:00:16.899
+Expand Thinking to inspect the deck activity
