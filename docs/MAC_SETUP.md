@@ -12,15 +12,13 @@ This guide takes you from downloading the app to asking your first question. You
 
 Anki Agent uses the cards stored on **this Mac**. Signing in to AnkiWeb in a browser, or having cards only on your phone, does not put those cards on the Mac.
 
-## 1. Choose the right download
+## 1. Download Anki Agent
 
 This download is for **Macs with Apple silicon** (Apple M-series chips). To check yours, click ** → About This Mac** in the top-left corner of your screen and look for **Chip: Apple M1, M2, M3**, or another Apple M-series chip. [Apple's guide](https://support.apple.com/en-us/116943) shows where to look.
 
-Choose the Mac `.dmg` with **`arm64`** in its name; `arm64` means Apple silicon.
+Open the **[Anki Agent Downloads / Releases page](https://github.com/ajy25/anki-agent/releases)**. Under the newest release, expand **Assets** if needed and download the **Apple silicon `.dmg`**. Its filename includes `arm64`, which means Apple silicon.
 
-Open the **[Anki Agent Downloads / Releases page](https://github.com/ajy25/anki-agent/releases)**. Select the newest release for your Mac and expand **Assets** if needed. Click the matching `.dmg` file.
-
-**Current availability:** an Apple silicon preview, **1.3.1**, has been built but is not yet published on GitHub. If you see no releases or no matching `.dmg`, ask the maintainer for the installer. The current file is `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`.
+**Current availability:** an Apple silicon preview, **1.3.1**, has been built but is not yet published on GitHub. If you see no releases or no `.dmg`, ask the maintainer for the installer. The current file is `Anki-Agent-1.3.1-macOS-arm64-preview.dmg`.
 
 The release notes should state which macOS versions have been tested. Do not assume every older Mac is supported.
 
@@ -110,7 +108,7 @@ Setup is complete when you can ask a question and inspect its source cards. AI a
 ## Update the app
 
 1. Quit Anki Agent with **Command-Q**.
-2. Download the newer `.dmg` for the same type of Mac.
+2. Download the newer Apple silicon `.dmg`.
 3. Open it and drag **Anki Agent.app** into **Applications**. Choose **Replace** if asked.
 4. Open **Anki Agent** from Applications. You may see the first-open security prompt again.
 
