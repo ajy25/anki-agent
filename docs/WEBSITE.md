@@ -25,7 +25,7 @@ Open **http://localhost:8000**. A local build without release metadata shows the
 
 ## Deployment and downloads
 
-The **Website** workflow builds and deploys changes to `site/`, `VERSION`, or its workflow on `main`. It also rebuilds when a release is published, edited, or deleted, and can be started manually from **Actions → Website → Run workflow**. It always builds the current `main` site, including when triggered by a release from an older tag.
+The **Website** workflow builds and deploys changes to `site/`, `VERSION`, or its workflow on `main`. After publishing, editing, or deleting a release, refresh its download link using **Actions → Website → Run workflow** on **main**. Deployments run from `main`, as required by the Pages environment; release tags do not deploy directly.
 
 GitHub Pages must use **GitHub Actions** as its publishing source. The workflow uploads only `build/site`; app code, credentials, Anki data, and local installers are not part of the site. Pages deployment uses GitHub's temporary deployment token, without a personal token or custom domain.
 

@@ -2,9 +2,9 @@
 
 User-visible changes are recorded here, newest version first.
 
-## 1.3.1 (preview) — 2026-11-07
+## [1.3.1 (preview)](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1) — 2026-11-07
 
-This is the first version included in this changelog.
+First public preview and the first version included in this changelog.
 
 ### Added
 

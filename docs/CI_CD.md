@@ -36,7 +36,7 @@ Workflow artifacts require GitHub access and expire. Share a published **Release
    ```
 
 4. **[Mac release draft](https://github.com/ajy25/anki-agent/actions/workflows/release.yml)** checks that the tag matches `VERSION`, reruns the same tests and package build at that tag, and downloads the resulting artifacts. Before attaching them, it checks their version, architecture, source commit, smoke-test results, byte sizes, and SHA-256 checksums again.
-5. If all jobs pass, the workflow creates a **draft pre-release** with the DMG, ZIP, manifest, and release notes. Open **[Releases](https://github.com/ajy25/anki-agent/releases)**, check the notes, and test the attached installer on the intended Mac configuration. Then click **Publish release** when ready to make it downloadable.
+5. If all jobs pass, the workflow creates a **draft pre-release** with the DMG, ZIP, manifest, and release notes. Open **[Releases](https://github.com/ajy25/anki-agent/releases)**, check the notes, and test the attached installer on the intended Mac configuration. Then click **Publish release** when ready to make it downloadable. Refresh the website using **Actions → Website → Run workflow** on **main** so its download button points to the published installer.
 
 Pushing normal commits does not publish an app. No release tag is created automatically. A mismatched tag or failed check stops the release workflow. It does not overwrite an existing release; use a new version for a replacement build. A rerun that encounters an existing draft needs maintainer attention rather than silently replacing its downloads.
 

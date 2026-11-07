@@ -5,10 +5,10 @@ This page is for maintainers. People installing the app should use the **[Mac se
 ## Current handoff
 
 - **Version:** 1.3.1, including the fix for the optional-shortcut crash after saving Setup.
-- **Prepared locally:** `dist/Anki-Agent-1.3.1-macOS-arm64-preview.dmg`, its app ZIP, and its JSON manifest.
+- **Public download:** [Mac installer (.dmg)](https://github.com/ajy25/anki-agent/releases/download/v1.3.1/Anki-Agent-1.3.1-macOS-arm64-preview.dmg), with ZIP and verification manifest on the [release page](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1). These assets were built and verified by the tagged release workflow.
 - **Architecture:** Apple silicon (`arm64`).
 - **Signing:** the preview has an ad-hoc signature and is not notarized by Apple.
-- **Publication:** no GitHub release has been published yet. The README and Mac setup guide state this explicitly; update their availability text when publishing.
+- **Publication:** version 1.3.1 is published as a public pre-release. Future tags prepare a release draft after the checks pass; publish that draft to make its downloads public.
 
 **The preview can be shared as a GitHub Release asset.** An Apple Developer membership is not required to upload or share it. Recipients may need the per-app **Open Anyway** steps in the setup guide. Developer ID signing and notarization improve first-open behavior; they are an optional distribution improvement, not a condition for sharing the preview.
 
@@ -17,7 +17,7 @@ This page is for maintainers. People installing the app should use the **[Mac se
 **Automated path:** follow [Prepare a release](../docs/CI_CD.md#prepare-a-release). A version tag matching the root `VERSION` file runs tests, builds and verifies the installer, then attaches it to a draft pre-release. Review and publish the draft when ready. The steps below also describe how to attach a locally built preview manually.
 
 1. Test the installer on a separate Mac or clean user account, using the [user setup guide](../docs/MAC_SETUP.md). Check the first-open prompts, key entry and testing, profile/deck selection, saving Setup, asking a question, quitting, and reopening with saved settings. Record the actual macOS version and chip tested. Automated package checks do not replace this first-run check.
-2. Open the repository's **[Releases page](https://github.com/ajy25/anki-agent/releases)** and choose **Draft a new release**. Choose the source revision used to build the app and a matching version tag. For this build, use a preview title such as **Anki Agent 1.3.1 — Mac preview** and mark it as a **pre-release**.
+2. Open the repository's **[Releases page](https://github.com/ajy25/anki-agent/releases)** and choose **Draft a new release**. Choose the source revision used to build the app and a matching version tag. For a new version, use a preview title matching `VERSION` and mark it as a **pre-release**. The existing 1.3.1 release is already published.
 3. Attach these files from `dist/` to the release's assets:
 
    ```text

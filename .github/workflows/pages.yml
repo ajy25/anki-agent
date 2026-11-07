@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
     paths: ['site/**', 'VERSION', '.github/workflows/pages.yml']
-  release:
-    types: [published, edited, deleted]
   workflow_dispatch:
 
 permissions:
