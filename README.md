@@ -41,11 +41,13 @@ For help choosing the correct download, finding your deck, or fixing a setup err
 ## Use the app
 
 - **Search:** find cards by keyword or tag. Turn on **AI assist** or use **Deep search** for a natural-language search.
-- **Tutor:** ask a question, watch the answer appear, and click its citations to inspect the source cards.
+- **Tutor:** ask a question, watch the answer appear, and click its citations to inspect the source cards. Tutor only reads your deck.
+- **Anki Agent:** ask it to change your deck, e.g. "put all Boards & Beyond GI cards in my GI deck" or "in my GI deck, suspend everything except GERD". Click **Review** under its reply to see every affected card (with images) and confirm. Every change can be undone.
+- **Move search results:** click **Move to deck…** above any search results to move those cards, with the same preview and undo. Moving and suspending require Anki to be open with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on.
 - **Thinking:** expand this panel to see model-returned reasoning and deck-search activity when available.
 - **Change your key or deck:** click **Setup**, or choose **Settings → API key & Anki deck…** in the Mac menu bar.
 
-Your Anki collection is read without changing it. Your key is saved in **macOS Keychain**. AI requests send your questions and relevant card text to **Groq**. Check AI answers against your cards; they can make mistakes.
+Your Anki collection is only changed when you confirm a move or suspend, and Anki itself makes the change through AnkiConnect. Your key is saved in **macOS Keychain**. AI requests send your questions and relevant card text to **Groq**. Check AI answers against your cards; they can make mistakes.
 
 ## Other instructions
 

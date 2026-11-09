@@ -36,13 +36,117 @@ def _check_cancelled(cancelled) -> None:
         raise TutorCancelled()
 
 
+RATE_LIMIT_RETRIES = 4        # extra tries for one request after a 429
+RATE_LIMIT_MAX_WAIT = 30.0    # longest wait worth sitting through; longer fails fast
+TRANSIENT_RETRIES = 1         # extra tries after a 5xx / dropped connection
+_RETRY_IN_RE = re.compile(r"try again in ([\d.hms]+)", re.IGNORECASE)
+_DURATION_RE = re.compile(r"([\d.]+)(ms|h|m|s)")
+_DAILY_RE = re.compile(r"per day|\((?:TPD|RPD)\)", re.IGNORECASE)
+
+
+class RateLimitExhausted(RuntimeError):
+    """The provider's limit needs a long wait (or is a daily cap): stop now
+    with a message the student can act on instead of retrying for minutes."""
+
+
+def _is_rate_limit(error: Exception) -> bool:
+    return getattr(error, "status_code", None) == 429 or type(error).__name__ == "RateLimitError"
+
+
+def _is_transient(error: Exception) -> bool:
+    """A server error or dropped connection worth one quick retry (not a timeout:
+    a slow model would just time out again)."""
+    name = type(error).__name__
+    if name in ("APITimeoutError", "TimeoutError"):
+        return False
+    status = getattr(error, "status_code", None)
+    return (isinstance(status, int) and status >= 500) or name == "APIConnectionError"
+
+
+def _retry_after(error: Exception) -> float | None:
+    """Seconds the provider asked us to wait ("try again in 7m5.9s"), if stated."""
+    m = _RETRY_IN_RE.search(str(error))
+    if not m:
+        return None
+    scale = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
+    parts = _DURATION_RE.findall(m.group(1))
+    return sum(float(n) * scale[u] for n, u in parts) if parts else None
+
+
+def _human_wait(seconds: float) -> str:
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f} hours"
+    if seconds >= 90:
+        return f"{round(seconds / 60)} minutes"
+    return f"{max(1, round(seconds))} seconds"
+
+
+def _rate_limit_message(error: Exception, model: str, wait: float | None) -> str:
+    when = f" Try again in about {_human_wait(wait)}," if wait else " Try again later,"
+    if _DAILY_RE.search(str(error)):
+        what = f"Groq's daily token limit for {model} is used up."
+    else:
+        what = f"Groq's rate limit for {model} was reached."
+    return what + when + " or pick a different model in the model picker."
+
+
+def _create(client, *, cancelled=None, on_wait=None, **kwargs):
+    """chat.completions.create that waits out short per-minute rate limits.
+
+    Free Groq tiers cap tokens per minute, and a card-finding run makes many
+    calls in a row. On a 429 asking for a short wait ("try again in 1.1s")
+    we wait and resend, telling `on_wait` so the UI can show it. A daily
+    cap or a long wait raises RateLimitExhausted at once instead.
+    """
+    transient_left = TRANSIENT_RETRIES
+    attempt = 0
+    while True:
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as error:
+            if not _is_rate_limit(error):
+                if transient_left and _is_transient(error):
+                    transient_left -= 1
+                    _sleep(1.0, cancelled)
+                    continue
+                raise
+            wait = _retry_after(error)
+            # A daily cap is a rolling window, so a short stated wait is still
+            # worth sitting through; an unknown wait on a daily cap is not.
+            daily_unknown = wait is None and _DAILY_RE.search(str(error))
+            if (daily_unknown or (wait is not None and wait > RATE_LIMIT_MAX_WAIT)
+                    or attempt >= RATE_LIMIT_RETRIES):
+                raise RateLimitExhausted(
+                    _rate_limit_message(error, str(kwargs.get("model") or "this model"), wait)
+                ) from error
+            attempt += 1
+            wait = (wait + 0.5) if wait is not None else 2.0 * attempt
+            logging.getLogger(__name__).info("Rate limited; retrying in %.1fs", wait)
+            if on_wait:
+                on_wait(wait)
+            _sleep(wait, cancelled)
+
+
+def _sleep(seconds: float, cancelled=None) -> None:
+    if cancelled is None:
+        time.sleep(seconds)
+    elif cancelled.wait(seconds):
+        raise TutorCancelled()
+
+
+def _wait_step(seconds: float) -> dict:
+    return {"type": "tool",
+            "text": f"Groq rate limit reached; waiting {_human_wait(seconds)} before continuing…"}
+
+
 def _chat_completion(client, *, emit=None, cancelled=None, iteration=1, **kwargs):
     """Consume provider deltas while assembling the normal tool-loop response."""
     if emit is None:
-        return client.chat.completions.create(**kwargs)
+        return _create(client, cancelled=cancelled, **kwargs)
     _check_cancelled(cancelled)
     emit({"event": "round", "iteration": iteration})
-    stream = client.chat.completions.create(stream=True, **kwargs)
+    stream = _create(client, cancelled=cancelled, stream=True,
+                     on_wait=lambda s: emit({"event": "tool", "step": _wait_step(s)}), **kwargs)
     content, reasoning, tools = [], [], {}
     finish_reason = None
     try:
@@ -332,6 +436,11 @@ class AgentSession:
         self.sources: list[dict] = []            # ordered by first-seen
         self.guid_to_ref: dict[str, int] = {}
         self.trace: list[dict] = []
+        # Card moves prepared by `propose_move`; shown to the student as
+        # "Review & move" buttons. Nothing is moved without their confirm.
+        self.proposals: list[dict] = []
+        self._on_event = None
+        self._cancelled = None
 
     # ---- source bookkeeping --------------------------------------------
 
@@ -404,13 +513,279 @@ class AgentSession:
             "tags": tops,
         }
 
+    def _tool_propose_move(self, args: dict) -> dict:
+        from . import anki_connect, organize
+
+        selection = str(args.get("selection") or "").strip()
+        if not selection:
+            return {"error": "missing_selection"}
+        if not str(args.get("target_deck") or "").strip():
+            return {"error": "missing_target_deck",
+                    "message": "Ask the student which deck the cards should go to."}
+        try:
+            anki_connect.check()
+            existing = anki_connect.deck_names()
+        except anki_connect.AnkiConnectError as e:
+            return {"error": "anki_unavailable", "message": str(e)}
+        try:
+            resolved = organize.resolve_target(args.get("target_deck"), existing, self.question)
+        except ValueError as e:
+            return {"error": "invalid_deck_name", "message": str(e)}
+
+        results, plan = self._select_cards(selection, deck=self.deck)
+        nids = sorted({int(r["nid"]) for r in results if r.get("nid")})
+        out = {
+            "selection": selection,
+            "notes_matched": len(nids),
+            "target_deck": resolved["target"],
+            "target_exists": resolved["exists"],
+            "suggestions": resolved["suggestions"],
+            "search_used": plan.get("explanation") or {
+                k: v for k, v in plan.items() if v and k != "explanation"},
+            "sample": [_candidate_summary(r, max_len=160) for r in results[:5]],
+        }
+        if not nids:
+            out["note"] = "No cards matched, so there is nothing to move."
+            return out
+        proposal = {
+            "id": len(self.proposals) + 1,
+            "action": "move",
+            "selection": selection,
+            "target": resolved["target"],
+            "target_exists": resolved["exists"],
+            "suggestions": resolved["suggestions"],
+            "count": len(nids),
+            "nids": nids,
+        }
+        self.proposals.append(proposal)
+        out["note"] = ("Nothing has moved yet. The student reviews a preview and "
+                       "confirms with the 'Review & move' button under your reply.")
+        out["reply_instructions"] = (
+            "Do not call more tools. Reply in 1-3 short sentences and nothing else: "
+            f"say {len(nids):,} notes matched '{selection}', that they will go to "
+            f"'{resolved['target']}'"
+            + ("" if resolved["exists"] else " (a new deck will be created)")
+            + ", and that they can click 'Review & move' below to preview and confirm"
+            + (f"; mention these existing decks in case they meant one: {resolved['suggestions']}"
+               if resolved["suggestions"] else "")
+            + ". Do not explain medical content, do not describe the cards, no citations."
+        )
+        return out
+
+    def _find_nids(self, description: str, context_deck: str = "") -> tuple[list[int], dict[int, dict], bool]:
+        """Collection-wide card finder (the deck limit is applied in Anki, which
+        is authoritative even if this app's index is out of date). Returns
+        (nids, notes by nid, whether a tag subtree matched directly).
+        `context_deck` only disambiguates which tag subtree is meant."""
+        results, plan = self._select_cards(description, deck="", context_deck=context_deck)
+        by_nid = {int(r["nid"]): r for r in results if r.get("nid")}
+        return sorted(by_nid), by_nid, bool(plan.get("tag_subtrees"))
+
+    def _select_cards(self, selection: str, *, deck: str, context_deck: str = "") -> tuple[list[dict], dict]:
+        """Every card matching a plain-English selection, as (results, plan).
+
+        A selection that names a resource and maps to a single tag subtree
+        ("Boards and Beyond GI anatomy") is answered straight from the tag
+        tree, with no model calls. Anything else goes to the AI card finder.
+        """
+        from . import organize
+
+        direct = direct_tag_selection(selection, deck=deck, context_deck=context_deck)
+        if direct is not None:
+            results, tags = direct
+            if self._on_event:
+                self._on_event({"event": "tool", "step": {"type": "tool", "text": (
+                    f"Matched tag {', '.join(tags)} directly: {len(results):,} notes.")}})
+            return results, {"tag_subtrees": tags,
+                             "explanation": "Matched the named resource's tag directly."}
+
+        def relay(event):
+            # Surface the card finder's tag browsing in Thinking; its token-level
+            # reasoning stays internal so it can't interleave with the agent's.
+            if self._on_event and event.get("event") == "tool":
+                self._on_event({"event": "tool", "step": {**event["step"], "type": "tool"}})
+
+        results, plan, debug = assisted_search(
+            selection, limit=organize.MAX_NOTES, deck=deck, max_iterations=10,
+            model=self.model, on_event=relay if self._on_event else None,
+            cancelled=self._cancelled,
+        )
+        if debug.get("rate_limited"):
+            raise RateLimitExhausted(debug["rate_limited"])
+        return results, plan
+
+    def _tool_propose_card_action(self, args: dict) -> dict:
+        from . import anki_connect, organize
+
+        action = str(args.get("action") or "").strip().lower()
+        if action not in organize.CARD_ACTIONS:
+            return {"error": "action must be 'suspend' or 'unsuspend'"}
+        deck_raw = str(args.get("deck") or "").strip()
+        selection = str(args.get("selection") or "").strip()
+        except_selection = str(args.get("except_selection") or "").strip()
+        if not deck_raw and not selection:
+            return {"error": "missing_scope",
+                    "message": "Ask the student which deck or which cards to change."}
+        try:
+            anki_connect.check()
+            existing = anki_connect.deck_names()
+        except anki_connect.AnkiConnectError as e:
+            return {"error": "anki_unavailable", "message": str(e)}
+        deck = ""
+        if deck_raw:
+            try:
+                resolved = organize.resolve_target(deck_raw, existing, self.question)
+            except ValueError as e:
+                return {"error": "invalid_deck_name", "message": str(e)}
+            if not resolved["exists"]:
+                return {"error": "deck_not_found", "deck": resolved["target"],
+                        "suggestions": resolved["suggestions"],
+                        "message": "No deck by that name. Ask which deck they meant."}
+            deck = resolved["target"]
+
+        nids = None
+        if selection:
+            nids, _, _ = self._find_nids(selection, context_deck=deck)
+            if nids and deck:
+                # Only the deck's own notes matter, and a collection-wide match
+                # (e.g. every Boards and Beyond note) can exceed MAX_NOTES.
+                nids = organize.notes_in_deck(deck, nids)
+            if not nids:
+                return {"error": "no_matching_cards", "selection": selection,
+                        "message": "No cards matched that description"
+                                   + (f" in '{deck}'" if deck else "") + ", so nothing would change."}
+            if len(nids) > organize.MAX_NOTES:
+                return {"error": "too_many_cards", "message": (
+                    f"That's more than {organize.MAX_NOTES:,} notes. Ask the student to name a deck "
+                    "or narrow the description.")}
+        exclude: list[int] = []
+        kept_sample: list[str] = []
+        if except_selection:
+            exclude, by_nid, by_tag = self._find_nids(except_selection, context_deck=deck)
+            # Cards to KEEP favour recall: missing one would suspend a card the
+            # student wanted. So for a short topic ("GERD") add every card whose
+            # text contains those words. Not when a tag subtree matched (the
+            # tag is exact), and not for long descriptions: every word must
+            # match, and words like "boards", "section", "and" are on
+            # thousands of cards, which kept 1,068 extra cards in one test.
+            if not by_tag and _is_short_topic(except_selection):
+                for r in search.fast_search("", limit=organize.MAX_NOTES, any_keywords=[except_selection]):
+                    if r.get("nid"):
+                        by_nid.setdefault(int(r["nid"]), r)
+            exclude = sorted(by_nid)
+            if not exclude:
+                # Never fall back to changing everything when the exception
+                # can't be found: that would suspend the cards they wanted kept.
+                return {"error": "exception_not_found", "except_selection": except_selection,
+                        "message": "Couldn't find the cards to keep, so nothing was prepared. "
+                                   "Ask the student to describe them differently."}
+            if deck:
+                # Keep only notes that are in the deck: the rest can't be
+                # suspended here anyway, and the full list can exceed MAX_NOTES.
+                exclude = organize.notes_in_deck(deck, exclude)
+                deck_has_cards = bool(exclude) or bool(
+                    anki_connect.invoke("findCards", query=organize._search_term(deck)))
+                if not exclude and deck_has_cards:
+                    # None of the cards to keep are in this deck. Don't silently
+                    # turn "everything except X" into "everything".
+                    return {"error": "exception_not_in_deck", "except_selection": except_selection,
+                            "message": f"None of the cards about '{except_selection}' are in "
+                                       f"'{deck}', so nothing was prepared. Tell the student and "
+                                       "ask whether they still want the whole deck changed."}
+                kept_sample = [by_nid[n]["front"][:120] for n in exclude[:6] if n in by_nid]
+            if len(exclude) > organize.MAX_KEEP_NOTES:
+                return {"error": "too_many_cards", "message": (
+                    f"The cards to keep are more than {organize.MAX_KEEP_NOTES:,} notes. Ask the "
+                    "student to name a deck or narrow the description.")}
+        spec = {"action": action, "deck": deck, "nids": nids, "exclude_nids": exclude}
+        preview = organize.preview_card_action(spec)
+        out = {
+            "action": action, "deck": deck, "selection": selection,
+            "except_selection": except_selection,
+            "cards_to_change": preview["cards_to_change"],
+            "already": preview["already"], "kept_cards": preview["kept"],
+            "kept_sample": kept_sample,
+        }
+        if not preview["cards_to_change"]:
+            if preview["already"] or preview["kept"]:
+                out["note"] = f"Nothing to do: those cards are already {action}ed."
+            else:
+                where = f"The deck '{deck}'" if deck else "That selection"
+                out["note"] = (f"Nothing to do: {where} has no cards right now (it may be empty "
+                               "or the cards were moved elsewhere). Tell the student plainly.")
+            return out
+        self.proposals.append({
+            "id": len(self.proposals) + 1, "action": action, "deck": deck,
+            "selection": selection, "except_selection": except_selection,
+            "nids": nids, "exclude_nids": exclude,
+            "count": preview["cards_to_change"], "kept": preview["kept"],
+            "kept_sample": kept_sample, "target": deck,
+        })
+        verb = "suspended" if action == "suspend" else "unsuspended"
+        out["reply_instructions"] = (
+            "Do not call more tools. Reply in 1-3 short sentences and nothing else: "
+            f"say {preview['cards_to_change']:,} cards"
+            + (f" in '{deck}'" if deck else "") + f" will be {verb}"
+            + (f", keeping {preview['kept']:,} cards about '{except_selection}'" if except_selection else "")
+            + f", and that they can click 'Review & {action}' below to preview and confirm. "
+            "Nothing has changed yet. Do not explain medical content; no citations."
+        )
+        return out
+
+    def _tool_propose_undo(self, args: dict) -> dict:
+        from . import organize
+
+        raw = args.get("change_ids")
+        wanted = [str(c).strip() for c in raw] if isinstance(raw, list) else []
+        wanted = [c for c in dict.fromkeys(wanted) if c]
+        if not wanted:
+            return {"error": "missing_change_ids",
+                    "message": "Pick the change ids to undo from the recent changes list."}
+        recent = {m["id"]: m for m in organize.list_moves(limit=organize.HISTORY_LIMIT)}
+        unknown = [c for c in wanted if c not in recent]
+        if unknown:
+            return {"error": "unknown_change_ids", "ids": unknown,
+                    "message": "Those ids aren't in the change history. Use ids from the list."}
+        already = [c for c in wanted if recent[c].get("status") == "undone"]
+        todo = [recent[c] for c in wanted if recent[c].get("status") != "undone"]
+        if not todo:
+            return {"note": "Those changes were already undone; nothing to do. Tell the student.",
+                    "already_undone": already}
+        todo.sort(key=lambda m: m.get("created") or 0, reverse=True)      # newest first
+        changes = [{k: m.get(k) for k in ("id", "action", "cards", "target", "label", "created")}
+                   for m in todo]
+        self.proposals.append({
+            "id": len(self.proposals) + 1, "action": "undo", "changes": changes,
+            "count": sum(int(m.get("cards") or 0) for m in todo),
+        })
+        described = "; ".join(
+            f"{_describe_change(m)}" for m in todo)
+        return {
+            "changes_to_undo": len(todo), "already_undone": already,
+            "reply_instructions": (
+                "Do not call more tools. Reply in 1-3 short sentences and nothing else: "
+                f"say these will be undone: {described}; and that they can click "
+                "'Review & undo' below to confirm. Nothing has changed yet."
+                + (" Mention that some of the changes were already undone." if already else "")
+            ),
+        }
+
     def _dispatch(self, name: str, args: dict) -> dict:
         try:
             if name == "search_deck":
                 return self._tool_search_deck(args)
             if name == "read_note":
                 return self._tool_read_note(args)
+            offered = {t["function"]["name"] for t in self.tool_spec}
+            if name == "propose_move" and name in offered:
+                return self._tool_propose_move(args)
+            if name == "propose_card_action" and name in offered:
+                return self._tool_propose_card_action(args)
+            if name == "propose_undo" and name in offered:
+                return self._tool_propose_undo(args)
             return {"error": f"unknown_tool:{name}"}
+        except (TutorCancelled, RateLimitExhausted):
+            raise
         except Exception as e:
             return {"error": f"tool_exception:{type(e).__name__}:{e}"}
 
@@ -427,7 +802,31 @@ class AgentSession:
                 f"read_note({str(args.get('guid', ''))[:10]}…) → "
                 f"ref [{result.get('ref', '?')}]"
             )
+        if name == "propose_card_action":
+            kept = f", keeping {result.get('kept_cards', 0)} cards" if result.get("except_selection") else ""
+            return (f"Prepared {result.get('action')}: {result.get('cards_to_change', 0)} cards "
+                    f"in {result.get('deck') or 'the matched notes'}{kept}")
+        if name == "propose_move":
+            new = "" if result.get("target_exists") else " (new deck)"
+            return (
+                f"Prepared move: {result.get('notes_matched', 0)} notes "
+                f"({result.get('selection', '')!r}) → {result.get('target_deck', '')}{new}"
+            )
         return f"{name}({_fmt_args(args)})"
+
+    def _tool_choice(self, iteration: int):
+        """The first round must use the deck, so answers stay grounded.
+
+        With only search tools that means forcing `search_deck`. When the
+        session can also prepare card moves, any tool is allowed in the first
+        round: an organizing request should go straight to `propose_move`,
+        and the provider rejects a call to any tool other than a forced one.
+        """
+        if not (self.require_deck_search and iteration == 0):
+            return "auto"
+        if any(t["function"]["name"] in PROPOSAL_TOOLS for t in self.tool_spec):
+            return "required"
+        return {"type": "function", "function": {"name": "search_deck"}}
 
     # ---- main loop -----------------------------------------------------
 
@@ -439,6 +838,8 @@ class AgentSession:
             "thinking": [],
         }
         t0 = time.perf_counter()
+        self._on_event, self._cancelled = on_event, cancelled
+        debug["move_proposals"] = self.proposals
 
         if not self.question.strip():
             return "Ask a question.", [], debug
@@ -477,25 +878,38 @@ class AgentSession:
         final_answer = ""
         hit_limit = False
 
+        def complete(i: int, choice):
+            return _chat_completion(
+                client, emit=on_event, cancelled=cancelled, iteration=i + 1,
+                model=self.model,
+                messages=messages,
+                tools=self.tool_spec,
+                tool_choice=choice,
+                temperature=0.2,
+                max_completion_tokens=1500,
+                timeout=RERANK_TIMEOUT,
+                **reasoning_kwargs(self.model),
+                **reasoning_output_kwargs(self.model),
+            )
+
         for i in range(max_iterations):
             t_iter = time.perf_counter()
+            choice = self._tool_choice(i)
             try:
-                resp = _chat_completion(
-                    client, emit=on_event, cancelled=cancelled, iteration=i + 1,
-                    model=self.model,
-                    messages=messages,
-                    tools=self.tool_spec,
-                    tool_choice=(
-                        {"type": "function", "function": {"name": "search_deck"}}
-                        if self.require_deck_search and i == 0 else "auto"
-                    ),
-                    temperature=0.2,
-                    max_completion_tokens=1500,
-                    timeout=RERANK_TIMEOUT,
-                    **reasoning_kwargs(self.model),
-                    **reasoning_output_kwargs(self.model),
-                )
-            except TutorCancelled:
+                try:
+                    resp = complete(i, choice)
+                except TutorCancelled:
+                    raise
+                except Exception as e:
+                    # "required" lets the model pick any tool, but for a message
+                    # no tool fits (a greeting, an unsupported request) it may
+                    # answer in text, which the provider rejects. Retry that
+                    # round once with tools optional instead of failing.
+                    if choice != "required" or "did not call a tool" not in str(e):
+                        raise
+                    debug["tool_choice_fallback"] = True
+                    resp = complete(i, "auto")
+            except (TutorCancelled, RateLimitExhausted):
                 raise
             except Exception as e:
                 debug["error"] = f"{type(e).__name__}:{e}"
@@ -585,7 +999,7 @@ class AgentSession:
                 final_answer = (resp.choices[0].message.content or "").strip()
                 debug["finish_reason"] = getattr(resp.choices[0], "finish_reason", None)
                 debug["forced_finalize"] = True
-            except TutorCancelled:
+            except (TutorCancelled, RateLimitExhausted):
                 raise
             except Exception as e:
                 debug["finalize_error"] = f"{type(e).__name__}:{e}"
@@ -623,11 +1037,188 @@ class AgentSession:
 # Tutor — agentic, deck-grounded explanations. Multi-turn conversation.
 # ---------------------------------------------------------------------------
 
-# The Tutor drives its own retrieval with the deck tools.
+PROPOSE_MOVE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_move",
+        "description": (
+            "Prepare a move of a set of cards into another Anki deck, for when "
+            "the student asks to move / put / add / organize cards into a deck. "
+            "Finds every matching card (it browses the real tag tree itself) "
+            "and returns how many notes matched, the resolved destination, and "
+            "sample cards. It does NOT move anything: the student reviews a "
+            "preview and confirms with a button shown under your reply."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "selection": {
+                    "type": "string",
+                    "description": (
+                        "Plain-English description of the cards, keeping every "
+                        "resource, system, and filter the student named, e.g. "
+                        "'Boards and Beyond GI cards'. Do not include the destination."
+                    ),
+                },
+                "target_deck": {
+                    "type": "string",
+                    "description": (
+                        "Destination deck copied EXACTLY as the student wrote "
+                        "it, every word included (deck names can contain words "
+                        "like 'cards'), with '::' between levels if they gave a "
+                        "path. E.g. 'GI', 'AnKing Step Deck::GI cards'. The app "
+                        "matches it to their existing decks."
+                    ),
+                },
+            },
+            "required": ["selection", "target_deck"],
+        },
+    },
+}
+
+# The agent drives its own retrieval with the deck tools, and can prepare
+# (never perform) card moves.
 TUTOR_TOOLS = [
     t for t in AGENT_TOOLS
     if t["function"]["name"] in ("search_deck", "read_note")
 ]
+
+PROPOSE_CARD_ACTION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_card_action",
+        "description": (
+            "Prepare suspending or unsuspending cards, e.g. 'in my GI deck, "
+            "suspend everything except GERD' -> action='suspend', "
+            "deck='GI', except_selection='GERD'. Finds the cards itself and "
+            "returns counts. It does NOT change anything: the student reviews "
+            "a preview and confirms with a button under your reply."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["suspend", "unsuspend"]},
+                "deck": {
+                    "type": "string",
+                    "description": (
+                        "Deck to act within, copied EXACTLY as the student wrote "
+                        "it (subdecks included). Omit only if they named no deck."
+                    ),
+                },
+                "selection": {
+                    "type": "string",
+                    "description": (
+                        "Which cards to act on, in plain English. Omit to act on "
+                        "every card in `deck`."
+                    ),
+                },
+                "except_selection": {
+                    "type": "string",
+                    "description": (
+                        "Cards to leave alone, e.g. 'GERD' for 'everything "
+                        "except GERD'. Keep the student's topic wording."
+                    ),
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+PROPOSE_UNDO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_undo",
+        "description": (
+            "Prepare undoing earlier changes this app made (card moves, "
+            "suspends, unsuspends), e.g. 'undo that', 'put the GI cards back', "
+            "'undo everything I did to my GI subdeck'. Pick the ids from the "
+            "RECENT CHANGES list in your instructions. It does NOT undo "
+            "anything: the student confirms with a button under your reply."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "change_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Ids of the changes to undo, from RECENT CHANGES.",
+                },
+            },
+            "required": ["change_ids"],
+        },
+    },
+}
+
+PROPOSAL_TOOLS = ("propose_move", "propose_card_action", "propose_undo")
+RECENT_CHANGES_SHOWN = 10
+
+
+def _describe_change(m: dict) -> str:
+    cards = f"{int(m.get('cards') or 0):,} cards"
+    action = m.get("action") or "move"
+    what = (f"{cards} {action}ed" + (f" in '{m['target']}'" if m.get("target") else "")
+            if action in ("suspend", "unsuspend") else f"{cards} moved to '{m.get('target')}'")
+    return what + (f" (request: \"{m['label']}\")" if m.get("label") else "")
+
+
+def _recent_changes_prompt() -> str:
+    """The change history, so 'undo that' can name exact ids."""
+    from . import organize
+    try:
+        moves = organize.list_moves(limit=RECENT_CHANGES_SHOWN)
+    except Exception:
+        return ""
+    if not moves:
+        return "\n\nRECENT CHANGES: none yet, so there is nothing to undo."
+    now = time.time()
+    lines = []
+    for m in moves:
+        mins = max(0, int((now - (m.get("created") or now)) // 60))
+        age = f"{mins} min ago" if mins < 120 else f"{mins // 60} h ago"
+        status = "ALREADY UNDONE" if m.get("status") == "undone" else "active"
+        lines.append(f"- id {m['id']} · {age} · {status} · {_describe_change(m)}")
+    return ("\n\nRECENT CHANGES (newest first; only 'active' ones can be undone):\n"
+            + "\n".join(lines))
+
+# ---------------------------------------------------------------------------
+# Anki Agent tab: organizes the collection (move / suspend / unsuspend).
+# Separate from the Tutor, which stays read-only. The model can only PREPARE
+# changes; each one is applied by the student's confirm click in the UI.
+# ---------------------------------------------------------------------------
+
+AGENT_ORGANIZER_TOOLS = TUTOR_TOOLS + [PROPOSE_MOVE_TOOL, PROPOSE_CARD_ACTION_TOOL, PROPOSE_UNDO_TOOL]
+
+AGENT_ORGANIZER_SYSTEM = (
+    "You are Anki Agent, an assistant that organizes a medical student's "
+    "Anki collection. You can prepare three kinds of changes, which the "
+    "student reviews in a preview and confirms with a button under your "
+    "reply. You never change anything yourself.\n\n"
+    "MOVING: If the student asks to move, put, add, or organize cards into "
+    "a deck (e.g. 'put all Boards and Beyond GI cards in my GI deck'), call "
+    "`propose_move` once with the card description and the destination "
+    "copied exactly as they wrote it. If they didn't say where the cards "
+    "should go, ask instead of guessing.\n\n"
+    "SUSPENDING: If the student asks to suspend or unsuspend cards (e.g. 'in "
+    "my GI deck, suspend everything except GERD'), call `propose_card_action` "
+    "once.\n\n"
+    "UNDOING: If the student asks to undo, revert, or put back an earlier "
+    "change ('undo that', 'undo all the cards I just added to my GI "
+    "subdeck'), call `propose_undo` once with the matching ids from RECENT "
+    "CHANGES below. 'That' / 'the last change' means the newest active one; "
+    "'everything' or a deck name means every active change matching it. If "
+    "none match, or they are already undone, say so instead of calling it.\n\n"
+    "After any of these tools, follow its `reply_instructions`: one to three short "
+    "sentences, never claiming anything has changed yet. If a tool reports "
+    "0 matches, a missing deck (mention its `suggestions`), or that Anki "
+    "isn't reachable, say so plainly and suggest what to try. You may use "
+    "`search_deck` or `read_note` to work out what the student means.\n\n"
+    "Study questions belong in the Tutor tab: if asked one, say in one "
+    "sentence that the Tutor tab answers questions with citations. If asked "
+    "for a change you have no tool for (deleting cards, editing card text, "
+    "changing deck options), say so in one sentence. No citations, no "
+    "medical explanations."
+)
 
 TUTOR_AGENT_SYSTEM = (
     "You are a medical tutor helping a US MS1 study for USMLE Step 1. You "
@@ -755,7 +1346,39 @@ def tutor_chat(
     observed flashcards (cited-first, each with a string `ref` and a `cited`
     flag), and a debug dict including the agent trace.
     Failed responses get up to three retries, each with a fresh search session.
+    The tutor is read-only: it has no tools that change the collection.
     """
+    return _chat_with_retries(
+        messages, system_prompt=TUTOR_AGENT_SYSTEM, tools=TUTOR_TOOLS,
+        first_turn_format=TUTOR_FIRST_TURN_FORMAT, deck=deck,
+        max_iterations=max_iterations, model=model, on_event=on_event, cancelled=cancelled,
+    )
+
+
+def agent_chat(
+    messages: list[dict], *, deck: str = "", max_iterations: int = 12,
+    model: str | None = None, on_event=None, cancelled=None,
+) -> tuple[str, list[dict], dict]:
+    """Anki Agent tab: prepares moves / suspends from plain-English requests.
+
+    Same contract as `tutor_chat`; prepared changes are returned in
+    `debug["move_proposals"]` and are applied only by the user's confirm click.
+    """
+    return _chat_with_retries(
+        messages, system_prompt=AGENT_ORGANIZER_SYSTEM + _recent_changes_prompt(),
+        tools=AGENT_ORGANIZER_TOOLS,
+        first_turn_format="", deck=deck,
+        max_iterations=max_iterations, model=model, on_event=on_event, cancelled=cancelled,
+    )
+
+
+def _chat_with_retries(
+    messages: list[dict], *, system_prompt: str, tools: list, first_turn_format: str,
+    deck: str = "", max_iterations: int = 12,
+    model: str | None = None, on_event=None, cancelled=None,
+) -> tuple[str, list[dict], dict]:
+    """Shared multi-turn loop with retries for the Tutor and Anki Agent tabs."""
+    base_prompt = system_prompt
     trimmed = (
         messages[-TUTOR_MAX_HISTORY:]
         if len(messages) > TUTOR_MAX_HISTORY
@@ -775,7 +1398,7 @@ def tutor_chat(
                 time.sleep(delay)
             elif cancelled.wait(delay):
                 raise TutorCancelled()
-        system_prompt = TUTOR_AGENT_SYSTEM
+        system_prompt = base_prompt
         if failures and failures[-1]["error"] == "false_empty_input":
             system_prompt += (
                 "\n\nA previous attempt incorrectly said the supplied message "
@@ -792,8 +1415,8 @@ def tutor_chat(
             history=history,
             deck=deck,
             system_prompt=system_prompt,
-            tools=TUTOR_TOOLS,
-            turn_directive="" if history else TUTOR_FIRST_TURN_FORMAT,
+            tools=tools,
+            turn_directive="" if history else first_turn_format,
             model=model,
             require_deck_search=True,
         )
@@ -812,7 +1435,21 @@ def tutor_chat(
                 on_event({**event, "attempt": attempt + 1})
             on_event({"event": "attempt", "attempt": attempt + 1, "model": session.model})
             run_kwargs.update(on_event=emit_event, cancelled=cancelled)
-        answer, sources, debug = session.run(**run_kwargs)
+        try:
+            answer, sources, debug = session.run(**run_kwargs)
+        except RateLimitExhausted as e:
+            # Retrying can't help until the provider's window resets.
+            step = {"type": "error", "text": str(e), "attempt": attempt + 1}
+            thinking.extend({**s, "attempt": attempt + 1} for s in stream_steps)
+            thinking.append(step)
+            if on_event:
+                on_event({"event": "retry", "step": step, "attempt": attempt + 1})
+            logging.getLogger(__name__).warning("Rate limited: model=%s %s", session.model, e)
+            return "", [], {
+                "model": session.model, "thinking": thinking, "response_retries": attempt,
+                "error": "rate_limited", "user_error": str(e),
+                "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+            }
         thinking.extend({**step, "attempt": attempt + 1} for step in (
             stream_steps if on_event else debug.get("thinking", [])
         ))
@@ -853,7 +1490,9 @@ def tutor_chat(
             error, debug.get("finish_reason"),
         )
 
-    # A failed answer and its sources must never enter conversation history.
+    # A failed answer and its sources must never enter conversation history,
+    # and a move prepared by a failed attempt must not be offered.
+    debug.pop("move_proposals", None)
     return "", [], debug
 
 
@@ -871,6 +1510,14 @@ ASSIST_SYSTEM = (
     "(resource names, system, topic, and any organizing concept the user "
     "names such as a yield level or exam scope); read back the real paths "
     "and counts, and call it as many times as needed.\n\n"
+    "Resource names are usually ABBREVIATED in tag paths (e.g. Boards and "
+    "Beyond -> '#B&B', First Aid -> '#FirstAid', Sketchy Micro -> "
+    "'#SketchyMicro'), and systems may be numbered (e.g. '10_GI'). If a "
+    "`find_tags` probe misses or returns odd matches, use `browse_tags` to "
+    "walk the tag tree level by level from the top (prefix '') down to the "
+    "resource and topic the user means, then use the exact path you found. "
+    "Prefer the current, high-count tag tree over small legacy or "
+    "'Original_Decks' branches.\n\n"
     "You ALSO have `search_deck`, a BM25 full-text keyword search over the "
     "card front/back (optionally narrowed by tag substrings) — the same engine "
     "the plain search box uses. Use it to probe the deck directly: check "
@@ -908,10 +1555,40 @@ ASSIST_SYSTEM = (
     "find the matching tag with find_tags and add its verified substring — do "
     "not volunteer facets the user didn't ask for. Put content concepts into "
     "keywords/any_keywords. Any field may be empty/omitted. Never invent a "
-    "tag substring you did not confirm via find_tags."
+    "tag substring you did not confirm via find_tags or browse_tags.\n\n"
+    "IMPORTANT: each tag_filters entry may match a DIFFERENT tag on the same "
+    "card. So 'resource X about topic Y' must be ONE substring spanning both "
+    "levels of a single tag path (e.g. '#B&B::10_GI'), never two separate "
+    "filters like ['#B&B', 'GI'], which also catches cards with any B&B tag "
+    "plus any unrelated GI tag. If the same resource+topic exists under "
+    "several exams (e.g. '#AK_Step1_v12::#B&B::10_GI' and "
+    "'#AK_Step2_v12::#B&B::06_GI'), list each full substring in any_tags."
 )
 
 ASSIST_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "browse_tags",
+            "description": (
+                "List the child levels directly under a tag path, with the "
+                "number of notes beneath each. Start with prefix '' for the "
+                "top level, then descend (e.g. '#AK_Step1_v12', then "
+                "'#AK_Step1_v12::#B&B'). Use this when you can't guess a "
+                "tag's exact name."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prefix": {
+                        "type": "string",
+                        "description": "Tag path to list children of; '' for the top level.",
+                    },
+                },
+                "required": ["prefix"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -1071,6 +1748,12 @@ def _run_planner(
             )
         except TutorCancelled:
             raise
+        except RateLimitExhausted as e:
+            # Callers that act on the plan (card moves) must not read an
+            # empty plan as "no cards matched".
+            debug["error"] = f"{type(e).__name__}:{e}"
+            debug["rate_limited"] = str(e)
+            break
         except Exception as e:
             debug["error"] = f"{type(e).__name__}:{e}"
             break
@@ -1115,6 +1798,16 @@ def _run_planner(
                 })
                 result = {"matches": hits}
                 summary = f"Looked up tags containing {args.get('substring')!r}: {len(hits)} matching tags."
+            elif tc.function.name == "browse_tags":
+                prefix = str(args.get("prefix") or "").strip().strip(":")
+                children = search.tag_children(prefix, limit=40)
+                debug.setdefault("tag_browses", []).append({"prefix": prefix, "n": len(children)})
+                # Names only, to keep tokens down: full path = prefix::name.
+                result = {"prefix": prefix,
+                          "children": [[c["tag"].rsplit("::", 1)[-1], c["notes"]] for c in children],
+                          "format": "[name, notes]; full tag path = prefix::name"}
+                where = repr(prefix) if prefix.strip() else "the top level"
+                summary = f"Browsed tags under {where}: {len(children)} branches."
             elif tc.function.name == "search_deck":
                 probe_q = str(args.get("query") or "").strip()
                 probe_tags = [
@@ -1172,6 +1865,10 @@ def _search_completion(client, thinking: list[dict], *, iteration=1, phase="plan
         context["batch"] = batch
     if on_event:
         def emit(event):
+            if event["event"] == "tool":           # e.g. a rate-limit wait notice
+                thinking.append({**event["step"], **context})
+                on_event({**event, "step": {**event["step"], **context}})
+                return
             if event["event"] != "reasoning_delta":
                 return
             previous = thinking[-1] if thinking else None
@@ -1181,11 +1878,165 @@ def _search_completion(client, thinking: list[dict], *, iteration=1, phase="plan
                 thinking.append({"type": "reasoning", "text": event["text"], **context})
             on_event({**event, **context})
         return _chat_completion(client, emit=emit, cancelled=cancelled, iteration=iteration, **kwargs)
-    response = client.chat.completions.create(**kwargs)
+    response = _create(client, cancelled=cancelled, **kwargs)
     captured = []
     _record_reasoning(response.choices[0].message, captured, iteration)
     thinking.extend({**step, **context} for step in captured)
     return response
+
+
+# ---------------------------------------------------------------------------
+# Direct tag selection — "Boards and Beyond GI anatomy" -> one tag subtree,
+# with no model calls. Conservative: any doubt falls back to the AI finder.
+# ---------------------------------------------------------------------------
+
+# Spoken resource names -> the tag level AnKing-style decks use for them.
+RESOURCE_ALIASES = {
+    "#B&B": ("boards and beyond", "boards & beyond", "boards n beyond", "b&b", "bnb", "b and b"),
+    "#Pathoma": ("pathoma",),
+    "#FirstAid": ("first aid", "firstaid"),
+    "#Bootcamp": ("bootcamp", "boot camp"),
+    "#Physeo": ("physeo",),
+    "#Pixorize": ("pixorize",),
+    "#Costanzo": ("costanzo",),
+    "#NinjaNerd": ("ninja nerd", "ninjanerd"),
+    "#Osmosis": ("osmosis",),
+    "#SketchyMicro": ("sketchy micro", "sketchymicro"),
+    "#SketchyPharm": ("sketchy pharm", "sketchy pharmacology", "sketchypharm"),
+    "#SketchyPath": ("sketchy path", "sketchy pathology", "sketchypath"),
+}
+# Words that say "which cards" rather than naming a topic.
+_FILLER_WORDS = frozenset("""
+    a all an and any are cards card deck decks every everything for from in
+    is its lecture lectures my notes note of on only section sections that
+    the their them these this those to video videos with subdeck subdecks
+    tagged tag tags
+""".split())
+# Topic words students use that differ from the tag spelling.
+_WORD_ALIASES = {
+    "gi": {"gi", "gastrointestinal", "gastro"},
+    "gastrointestinal": {"gi", "gastrointestinal", "gastro"},
+    "gastro": {"gi", "gastrointestinal", "gastro"},
+    "cardiology": {"cardio", "cardiology", "cardiovascular"},
+    "cardiovascular": {"cardio", "cardiology", "cardiovascular"},
+    "cardio": {"cardio", "cardiology", "cardiovascular"},
+    "pulmonary": {"pulm", "pulmonary", "pulmonology"},
+    "pulm": {"pulm", "pulmonary", "pulmonology"},
+    "neurology": {"neuro", "neurology"},
+    "neuro": {"neuro", "neurology"},
+    "heme": {"heme", "hematology"},
+    "hematology": {"heme", "hematology"},
+    "endo": {"endo", "endocrine", "endocrinology"},
+    "endocrine": {"endo", "endocrine", "endocrinology"},
+    "renal": {"renal", "kidney"},
+    "repro": {"repro", "reproductive", "reproduction"},
+    "reproductive": {"repro", "reproductive", "reproduction"},
+    "embryo": {"embryo", "embryology"},
+    "physio": {"physio", "physiology"},
+    "physiology": {"physio", "physiology"},
+    "pharm": {"pharm", "pharmacology"},
+    "pharmacology": {"pharm", "pharmacology"},
+    "micro": {"micro", "microbiology"},
+    "path": {"path", "pathology"},
+    "biochem": {"biochem", "biochemistry"},
+    "psych": {"psych", "psychiatry"},
+    "msk": {"msk", "musculoskeletal"},
+}
+_DIRECT_MAX_MATCHES = 3
+_DIRECT_DOMINANT_SHARE = 0.9   # in a deck, a subtree with this share of matches wins a tie
+
+
+def _words(text: str) -> list[str]:
+    text = text.casefold().replace("step 1", "step1").replace("step 2", "step2")
+    return [w.lstrip("0") or "0" if w.isdigit() else w
+            for w in re.split(r"[^a-z0-9]+", text) if w]
+
+
+def _word_in_segment(word: str, segment_words: list[str]) -> bool:
+    wanted = _WORD_ALIASES.get(word, {word})
+    for w in segment_words:
+        if w in wanted or w.rstrip("s") == word.rstrip("s"):
+            return True
+        if len(word) >= 5 and w.startswith(word):          # "embryo" -> "embryology"
+            return True
+    return False
+
+
+def _is_short_topic(text: str) -> bool:
+    """A topic name ("GERD", "liver disease") rather than a description: at
+    most 3 meaningful words and no resource name."""
+    lowered = " " + " ".join(text.casefold().split()) + " "
+    if any(f" {a} " in lowered for aliases in RESOURCE_ALIASES.values() for a in aliases):
+        return False
+    return 0 < len([w for w in _words(text) if w not in _FILLER_WORDS]) <= 3
+
+
+def direct_tag_selection(selection: str, *, deck: str = "",
+                         context_deck: str = "") -> tuple[list[dict], list[str]] | None:
+    """(notes, tag subtrees) when `selection` names a resource and its other
+    words pick out exactly one subtree of that resource's tags; else None.
+
+    Every remaining topic word must match a tag level, and the shallowest
+    matching subtree must be unique within each top-level deck tag (the same
+    subtree in two decks, e.g. Step 1 and Step 2 Boards and Beyond, is fine).
+    `deck` limits the notes returned; `context_deck` (default: `deck`) only
+    breaks ties, keeping subtrees that have notes in that deck.
+    """
+    context_deck = context_deck or deck
+    text = " " + " ".join(selection.casefold().split()) + " "
+    resource = None
+    for segment, aliases in RESOURCE_ALIASES.items():
+        for alias in sorted(aliases, key=len, reverse=True):
+            if f" {alias} " in text:
+                if resource and resource != segment:
+                    return None                              # two resources named
+                resource = segment
+                text = text.replace(f" {alias} ", " ")
+    if not resource:
+        return None
+    topic = [w for w in _words(text) if w not in _FILLER_WORDS]
+    tags = search.tags_with_segment(resource)
+    if not tags:
+        return None
+
+    matches: set[tuple[str, ...]] = set()
+    for tag in tags:
+        parts = tag.split("::")
+        start = next(i for i, p in enumerate(parts) if p.casefold() == resource.casefold())
+        for end in range(start + 1, len(parts) + 1):
+            below = [_words(p) for p in parts[start + 1:end]]
+            # Earlier levels (e.g. "#AK_Step1_v12") can satisfy "step1".
+            above = [_words(p) for p in parts[:start]]
+            if all(any(_word_in_segment(w, seg) for seg in below + above) for w in topic):
+                matches.add(tuple(parts[:end]))
+                break
+    if matches and context_deck:
+        # Within a deck, only subtrees that have notes there count, so "Boards
+        # and Beyond anatomy" inside a GI deck means the GI anatomy section.
+        present = search.tags_in_deck(context_deck)
+        matches = {m for m in matches
+                   if any(t == "::".join(m) or t.startswith("::".join(m) + "::") for t in present)}
+    if not matches:
+        return None
+    # Keep the shallowest match per top-level tag; drop matches nested in others.
+    shallow = min(len(m) for m in matches)
+    best = [m for m in matches if len(m) == shallow]
+    roots = [m[0] for m in best]
+    if (len(set(roots)) != len(roots) or len(best) > _DIRECT_MAX_MATCHES) and context_deck:
+        # Notes often carry a second system's tag, so "anatomy" in a GI deck
+        # also touches a few Pulm / Renal anatomy notes. One subtree holding
+        # nearly all of the deck's matching notes is the one that was meant.
+        notes = {m: {n["guid"] for n in search.notes_under_tags(["::".join(m)], deck=context_deck)}
+                 for m in best}
+        top = max(best, key=lambda m: len(notes[m]))
+        every = set().union(*notes.values())
+        if notes[top] and len(notes[top]) >= _DIRECT_DOMINANT_SHARE * len(every):
+            best, roots = [top], [top[0]]
+    if len(set(roots)) != len(roots) or len(best) > _DIRECT_MAX_MATCHES:
+        return None                                          # ambiguous
+    prefixes = sorted("::".join(m) for m in best)
+    notes = search.notes_under_tags(prefixes, deck=deck)
+    return (notes, prefixes) if notes else None
 
 
 def assisted_search(

@@ -79,7 +79,9 @@ def get_client():
             key = os.environ.get("GROQ_API_KEY")
             if not key:
                 raise RuntimeError("GROQ_API_KEY is not set")
-            _GROQ_CLIENT = Groq(api_key=key)
+            # No SDK-level retries: they sleep silently on 429s. llm._create
+            # retries visibly and fails fast on long or daily limits.
+            _GROQ_CLIENT = Groq(api_key=key, max_retries=0)
         return _GROQ_CLIENT
     # openai
     if _OPENAI_CLIENT is None:
@@ -92,7 +94,7 @@ def get_client():
         key = os.environ.get("OPENAI_API_KEY")
         if not key:
             raise RuntimeError("OPENAI_API_KEY is not set")
-        _OPENAI_CLIENT = OpenAI(api_key=key)
+        _OPENAI_CLIENT = OpenAI(api_key=key, max_retries=0)
     return _OPENAI_CLIENT
 
 
