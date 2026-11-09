@@ -9,7 +9,8 @@ const state = {
   query: "",
   activeTags: new Set(),   // holds full hierarchical tag strings (exact-match)
   lastReq: 0,
-  tutorMessages: [],       // [{role: "user"|"assistant", content: string}]
+  tutorMessages: [],       // current chat tab's [{role, content}] (Tutor or Anki Agent)
+  chatStore: { tutor: [], agent: [] },   // each chat tab keeps its own conversation
   tutorPending: false,
   tutorAbort: null,        // cancels a request when its conversation is discarded
   tutorLive: null,         // partial output; only completed answers enter history
@@ -24,7 +25,30 @@ const state = {
   lastIds: [],             // Anki note ids of the current result set (bulk Anki search)
 };
 
-const VALID_MODES = new Set(["fast", "tutor"]);
+const VALID_MODES = new Set(["fast", "tutor", "agent"]);
+// Tutor (read-only, cited answers) and Anki Agent (prepares deck changes)
+// share the chat UI; each keeps a separate conversation.
+const isChat = (mode) => mode === "tutor" || mode === "agent";
+const CHAT_UI = {
+  tutor: {
+    title: "Tutor", endpoint: "/api/tutor",
+    placeholder: "Message the tutor…  (Enter to send, Shift+Enter for newline)",
+    emptyTitle: "Ask the tutor anything",
+    emptySub: `The tutor searches your deck and grounds its answer in real cards,
+          citing them inline — sources show on the right.
+          Closing the launcher will start a fresh conversation.`,
+  },
+  agent: {
+    title: "Anki Agent", endpoint: "/api/agent",
+    placeholder: "Tell Anki Agent what to change, e.g. “move all Boards and Beyond GI cards to my GI deck”  (Enter to send)",
+    emptyTitle: "Organize your Anki deck",
+    emptySub: `Ask Anki Agent to move, suspend, or unsuspend cards, e.g.
+          “put all Boards and Beyond GI cards in my GI deck” or “in my GI deck,
+          suspend everything except GERD”. You'll see every card in a preview
+          and confirm before anything changes, and you can undo.
+          Study questions go to the Tutor tab.`,
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -37,17 +61,18 @@ async function boot() {
   if (initialMode && VALID_MODES.has(initialMode)) {
     state.mode = initialMode;
   }
+  if (isChat(state.mode)) state.tutorMessages = state.chatStore[state.mode];
 
   bindUi();
   applyModeUi();           // apply body class + active mode button
   updatePlaceholder();
 
-  if (state.mode === "tutor") {
+  if (isChat(state.mode)) {
     renderTutor();
   }
 
   // Allow the launcher to reset the tutor conversation on window hide.
-  window.resetTutor = resetTutor;
+  window.resetTutor = () => resetTutor({ all: true });
 
   await Promise.all([loadStats(), loadTags(), loadDecks()]);
 }
@@ -61,7 +86,9 @@ function applyModeUi() {
     b.classList.toggle("active", active);
     b.setAttribute("aria-selected", active ? "true" : "false");
   });
-  document.body.classList.toggle("mode-tutor", state.mode === "tutor");
+  // Both chat tabs use the chat layout (mode-tutor); mode-agent marks the organizer.
+  document.body.classList.toggle("mode-tutor", isChat(state.mode));
+  document.body.classList.toggle("mode-agent", state.mode === "agent");
 }
 
 function setModel(model) {
@@ -166,16 +193,22 @@ function bindUi() {
     });
   }
 
+  $("#move-to-deck")?.addEventListener("click", () => {
+    if (!state.lastIds.length) return;
+    openMoveDialog({ nids: state.lastIds, label: state.query });
+  });
+
   $$(".mode-btn").forEach((btn) => {
     if (!btn.dataset.mode) return;   // skip nav links
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
       if (btn.dataset.mode === state.mode) return;
-      if (state.mode === "tutor") cancelTutorRequest();
+      if (isChat(state.mode)) cancelTutorRequest();
       else { cancelSearchRequest(); hideSearchThinking(); }
       state.mode = btn.dataset.mode;
+      if (isChat(state.mode)) state.tutorMessages = state.chatStore[state.mode];
       applyModeUi();
-      if (state.mode === "tutor") {
+      if (isChat(state.mode)) {
         renderTutor();
       } else {
         // Leaving tutor: wipe the results area back to Search defaults.
@@ -187,7 +220,7 @@ function bindUi() {
       }
       updatePlaceholder();
       // tutor drives itself via its own composer.
-      if (state.mode !== "tutor" && (state.query || state.activeTags.size)) {
+      if (!isChat(state.mode) && (state.query || state.activeTags.size)) {
         runCurrent();
       }
     });
@@ -196,13 +229,13 @@ function bindUi() {
   document.addEventListener("keydown", (e) => {
     // Let the modal handle Escape without hiding the desktop app or clearing
     // search. Other app shortcuts must not steal focus from the viewer.
-    if ($("#image-viewer").open) return;
+    if ($("#image-viewer").open || $("#move-dialog")?.open) return;
     const active = document.activeElement;
     const inField = active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
     if (active?.tagName === "SELECT" && e.key === "Escape") return;
     if (e.key === "/" && !inField) {
       e.preventDefault();
-      if (state.mode === "tutor") {
+      if (isChat(state.mode)) {
         const ti = $("#tutor-input");
         if (ti) ti.focus();
       } else {
@@ -220,8 +253,8 @@ function bindUi() {
   });
 
   window.addEventListener("focus", () => {
-    if ($("#image-viewer").open) return;
-    if (state.mode === "tutor") {
+    if ($("#image-viewer").open || $("#move-dialog")?.open) return;
+    if (isChat(state.mode)) {
       const ti = $("#tutor-input");
       if (ti) ti.focus();
       return;
@@ -384,7 +417,7 @@ function selectDeck(path) {
     r.classList.toggle("active", isActive);
   });
   updateDeckPill();
-  if (state.mode !== "tutor") runCurrent();
+  if (!isChat(state.mode)) runCurrent();
 }
 
 function updateDeckPill() {
@@ -411,7 +444,7 @@ function updateDeckPill() {
 function runCurrent() {
   // Tutor is conversational — it submits via its own composer, not the
   // (hidden) global search bar.
-  if (state.mode === "tutor") return;
+  if (isChat(state.mode)) return;
   return runSearch();
 }
 
@@ -847,6 +880,348 @@ function setCopyAllIds(ids) {
   btn.textContent = state.lastIds.length
     ? `Copy Anki search (${state.lastIds.length})`
     : "Copy Anki search";
+  const move = $("#move-to-deck");
+  if (move) {
+    move.hidden = state.lastIds.length === 0;
+    move.textContent = state.lastIds.length ? `Move ${state.lastIds.length} to deck…` : "Move to deck…";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Move cards to a deck (AnkiConnect). Flow: pick destination -> Preview ->
+// Confirm -> Undo available. Nothing is written before the Confirm click.
+// ---------------------------------------------------------------------------
+
+const moveUi = { nids: [], label: "", previewed: "", lastMoveId: null };
+
+async function postJson(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await r.json(); } catch { /* non-JSON error page */ }
+  if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
+  return data;
+}
+
+function moveStatus(html, kind = "") {
+  const el = $("#move-status");
+  if (!el) return;
+  el.className = `move-status ${kind}`;
+  el.innerHTML = html;
+}
+
+function openMoveDialog({ nids, target = "", label = "" }) {
+  moveUi.nids = [...nids];
+  moveUi.label = label || "";
+  moveUi.previewed = "";
+  moveUi.lastMoveId = null;
+  const n = moveUi.nids.length;
+  const dlg = $("#move-dialog");
+  dlg.innerHTML = `
+    <div class="move-form">
+      <h2>Move ${n} note${n === 1 ? "" : "s"} to a deck</h2>
+      <p class="move-sub">Every card of these notes leaves its current deck. Review history
+        and scheduling move with them, and you can undo.</p>
+      <label class="move-label" for="move-target">Destination deck</label>
+      <input id="move-target" list="move-deck-list" autocomplete="off" spellcheck="false"
+             placeholder="Pick a deck or type a new name, e.g. GI or Step 1::GI" />
+      <datalist id="move-deck-list"></datalist>
+      <div id="move-status" class="move-status" aria-live="polite"></div>
+      <div id="move-preview" class="move-preview"></div>
+      <div id="move-cards"></div>
+      <div class="move-actions">
+        <button type="button" class="move-secondary" data-act="close">Close</button>
+        <button type="button" class="move-secondary" data-act="preview">Preview</button>
+        <button type="button" class="move-primary" data-act="confirm" disabled>Move cards</button>
+      </div>
+      <details class="move-history">
+        <summary>Recent changes</summary>
+        <div id="move-history-list" class="move-history-list"></div>
+      </details>
+    </div>`;
+  const input = $("#move-target");
+  input.value = target;
+  const confirmBtn = dlg.querySelector('[data-act="confirm"]');
+  input.addEventListener("input", () => {
+    // Any edit invalidates the preview; the user must preview the new target.
+    moveUi.previewed = "";
+    confirmBtn.disabled = true;
+    $("#move-preview").innerHTML = "";
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); previewMove(); }
+  });
+  dlg.querySelector('[data-act="close"]').addEventListener("click", () => dlg.close());
+  dlg.querySelector('[data-act="preview"]').addEventListener("click", previewMove);
+  confirmBtn.addEventListener("click", confirmMove);
+  dlg.querySelector(".move-history").addEventListener("toggle", (e) => {
+    if (e.target.open) loadMoveHistory();
+  });
+  dlg.showModal();
+  input.focus();
+  mountPreviewCards($("#move-cards"), moveUi.nids, "Cards that will move");
+
+  fetch("/api/anki/decks").then(async (r) => {
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Couldn't load your Anki decks.");
+    $("#move-deck-list").innerHTML = (data.decks || [])
+      .map((d) => `<option value="${escapeHtml(d)}"></option>`).join("");
+  }).catch((e) => moveStatus(escapeHtml(e.message), "error"));
+
+  if (target) previewMove();
+}
+
+// Every card in a pending change, as compact rows (front text + image
+// thumbnails) that expand to the full card. Loads PREVIEW_PAGE at a time.
+const PREVIEW_PAGE = 50;
+
+function mountPreviewCards(container, nids, title) {
+  const section = document.createElement("section");
+  section.className = "preview-cards";
+  section.innerHTML = `
+    <h3 class="preview-cards-title">${escapeHtml(title)}
+      <span class="muted">${nids.length} note${nids.length === 1 ? "" : "s"}</span></h3>
+    <div class="preview-cards-list"></div>
+    <p class="preview-cards-missing muted" hidden></p>
+    <button type="button" class="move-secondary preview-cards-more" hidden></button>`;
+  container.appendChild(section);
+  const list = section.querySelector(".preview-cards-list");
+  const more = section.querySelector(".preview-cards-more");
+  const missingEl = section.querySelector(".preview-cards-missing");
+  let offset = 0;
+  let missing = 0;
+  async function loadPage() {
+    const page = nids.slice(offset, offset + PREVIEW_PAGE);
+    offset += page.length;
+    more.disabled = true;
+    more.textContent = "Loading…";
+    try {
+      const r = await postJson("/api/notes", { nids: page });
+      for (const note of r.notes || []) list.appendChild(renderPreviewCard(note));
+      missing += (r.missing || []).length;
+    } catch (e) {
+      missingEl.hidden = false;
+      missingEl.textContent = e.message;
+    }
+    const left = nids.length - offset;
+    more.hidden = left <= 0;
+    more.disabled = false;
+    more.textContent = `Show ${Math.min(left, PREVIEW_PAGE)} more (${left} left)`;
+    if (missing) {
+      missingEl.hidden = false;
+      missingEl.textContent = `${missing} note${missing === 1 ? " isn't" : "s aren't"} in this app's search index, so ${missing === 1 ? "it" : "they"} can't be shown. Restart the app to re-index.`;
+    }
+  }
+  more.addEventListener("click", loadPage);
+  if (nids.length) loadPage();
+  else list.innerHTML = `<p class="muted">None.</p>`;
+}
+
+function renderPreviewCard(note) {
+  const row = document.createElement("div");
+  row.className = "preview-card";
+  // Sanitized server HTML; a <template> is inert, so nothing loads here.
+  const tpl = document.createElement("template");
+  tpl.innerHTML = [note.front_html, note.back_html, ...(note.extras_html || [])].join("");
+  const images = [...tpl.content.querySelectorAll("img")].slice(0, 6);
+  const text = (note.front || "").trim();
+  row.innerHTML = `
+    <div class="preview-card-main">
+      <div class="preview-card-text">${text ? escapeHtml(text.length > 220 ? text.slice(0, 219) + "…" : text) : '<span class="muted">(no text)</span>'}</div>
+      <div class="preview-card-thumbs"></div>
+    </div>
+    <button type="button" class="move-undo preview-card-toggle" aria-expanded="false">Full card</button>
+    <div class="preview-card-full" hidden></div>`;
+  const thumbs = row.querySelector(".preview-card-thumbs");
+  for (const source of images) {
+    const img = document.createElement("img");
+    img.src = source.getAttribute("src") || "";
+    img.alt = source.getAttribute("alt") || "";
+    img.loading = "lazy";
+    img.className = "preview-thumb";
+    img.title = "Click to expand";
+    img.addEventListener("click", () => openCardImage(img));
+    img.addEventListener("error", () => img.remove(), { once: true });
+    thumbs.appendChild(img);
+  }
+  const toggle = row.querySelector(".preview-card-toggle");
+  const full = row.querySelector(".preview-card-full");
+  toggle.addEventListener("click", () => {
+    if (!full.firstChild) full.appendChild(renderNote(note, { hideScore: true, inDialog: true }));
+    full.hidden = !full.hidden;
+    toggle.textContent = full.hidden ? "Full card" : "Hide card";
+    toggle.setAttribute("aria-expanded", String(!full.hidden));
+  });
+  return row;
+}
+
+// Suspend / unsuspend proposal from Anki Agent: fresh preview from Anki, then
+// the user confirms. Undo and history are shared with moves.
+async function openCardActionDialog(p, msg) {
+  const verb = p.action === "suspend" ? "Suspend" : "Unsuspend";
+  const spec = { action: p.action, deck: p.deck || "", nids: p.nids ?? null, exclude_nids: p.exclude_nids || [] };
+  const dlg = $("#move-dialog");
+  dlg.innerHTML = `
+    <div class="move-form">
+      <h2>${verb} cards${p.deck ? ` in ${escapeHtml(p.deck)}` : ""}</h2>
+      <p class="move-sub">${p.action === "suspend"
+        ? "Suspended cards stay in your deck with their history but won't show up in reviews until you unsuspend them."
+        : "Unsuspended cards return to your reviews with their history intact."} You can undo.</p>
+      <div id="move-status" class="move-status" aria-live="polite"></div>
+      <div id="move-preview" class="move-preview"></div>
+      <div id="move-cards"></div>
+      <div class="move-actions">
+        <button type="button" class="move-secondary" data-act="close">Close</button>
+        <button type="button" class="move-primary" data-act="confirm" disabled>${verb} cards</button>
+      </div>
+      <details class="move-history">
+        <summary>Recent changes</summary>
+        <div id="move-history-list" class="move-history-list"></div>
+      </details>
+    </div>`;
+  const confirmBtn = dlg.querySelector('[data-act="confirm"]');
+  dlg.querySelector('[data-act="close"]').addEventListener("click", () => dlg.close());
+  dlg.querySelector(".move-history").addEventListener("toggle", (e) => { if (e.target.open) loadMoveHistory(); });
+  dlg.showModal();
+
+  moveStatus("Checking with Anki…");
+  try {
+    const r = await postJson("/api/cards/preview", spec);
+    moveStatus("");
+    $("#move-preview").innerHTML = `
+      <p class="move-summary"><b>${r.cards_to_change}</b> card${r.cards_to_change === 1 ? "" : "s"} will be ${p.action}ed.</p>
+      ${p.except_selection ? `<p class="move-note">Keeping <b>${r.kept}</b> card${r.kept === 1 ? "" : "s"} about “${escapeHtml(p.except_selection)}”.</p>` : ""}
+      ${r.already ? `<p class="move-note">${r.already} card${r.already === 1 ? " is" : "s are"} already ${p.action}ed.</p>` : ""}`;
+    const cards = $("#move-cards");
+    if (p.except_selection) mountPreviewCards(cards, r.kept_nids || [], `Cards that stay ${p.action === "suspend" ? "active" : "suspended"} (“${p.except_selection}”)`);
+    mountPreviewCards(cards, r.change_nids || [], `Cards that will be ${p.action}ed`);
+    confirmBtn.disabled = r.cards_to_change === 0;
+    confirmBtn.textContent = r.cards_to_change ? `${verb} ${r.cards_to_change} cards` : "Nothing to change";
+  } catch (e) {
+    moveStatus(escapeHtml(e.message), "error");
+  }
+
+  confirmBtn.addEventListener("click", async () => {
+    confirmBtn.disabled = true;
+    moveStatus(`${verb === "Suspend" ? "Suspending" : "Unsuspending"} cards in Anki…`);
+    try {
+      const r = await postJson("/api/cards/apply", { ...spec, label: msg?.content?.slice(0, 200) || "" });
+      $("#move-preview").innerHTML = "";
+      $("#move-cards").innerHTML = "";
+      moveStatus(r.changed
+        ? `${p.action === "suspend" ? "Suspended" : "Unsuspended"} <b>${r.changed}</b> card${r.changed === 1 ? "" : "s"}.
+           <button type="button" class="move-undo" data-id="${escapeHtml(r.id)}">Undo</button>`
+        : "Nothing needed changing.", "ok");
+      $("#move-status .move-undo")?.addEventListener("click", (e) => undoMove(e.target.dataset.id));
+      if ($("#move-dialog .move-history")?.open) loadMoveHistory();
+    } catch (e) {
+      moveStatus(escapeHtml(e.message), "error");
+      confirmBtn.disabled = false;
+    }
+  });
+}
+
+async function previewMove() {
+  const target = $("#move-target").value.trim();
+  const confirmBtn = $('#move-dialog [data-act="confirm"]');
+  if (!target) { moveStatus("Choose a destination deck first.", "error"); return; }
+  moveStatus("Checking with Anki…");
+  confirmBtn.disabled = true;
+  try {
+    const p = await postJson("/api/move/preview", { nids: moveUi.nids, target });
+    if ($("#move-target").value.trim() !== target) return;   // edited meanwhile
+    moveStatus("");
+    const from = (p.from_decks || []).slice(0, 6).map((d) =>
+      `<li><span>${escapeHtml(d.deck)}</span><b>${d.cards}</b></li>`).join("");
+    const more = (p.from_decks || []).length > 6
+      ? `<li class="muted">…and ${p.from_decks.length - 6} more decks</li>` : "";
+    const notes = [];
+    if (!p.target_exists) notes.push(`<b>${escapeHtml(p.target)}</b> doesn't exist yet. It will be created.`);
+    if (p.already_in_target) notes.push(`${p.already_in_target} card${p.already_in_target === 1 ? " is" : "s are"} already there and will be skipped.`);
+    if (p.missing_notes) notes.push(`${p.missing_notes} note${p.missing_notes === 1 ? " wasn't" : "s weren't"} found in Anki (deleted since indexing?).`);
+    if (p.outside_index_scope) notes.push(`This deck is outside <b>${escapeHtml(p.index_scope)}</b>, the deck this app indexes. After the app re-indexes, these cards won't show in search here. To keep them searchable, choose a parent deck or the whole collection in Setup.`);
+    $("#move-preview").innerHTML = `
+      <p class="move-summary"><b>${p.cards_to_move}</b> card${p.cards_to_move === 1 ? "" : "s"}
+        from <b>${p.notes}</b> note${p.notes === 1 ? "" : "s"} will move to
+        <b>${escapeHtml(p.target)}</b>.</p>
+      ${from ? `<p class="move-from-label">Currently in:</p><ul class="move-from">${from}${more}</ul>` : ""}
+      ${notes.map((t) => `<p class="move-note">${t}</p>`).join("")}`;
+    moveUi.previewed = target;
+    confirmBtn.disabled = p.cards_to_move === 0;
+    confirmBtn.textContent = p.cards_to_move ? `Move ${p.cards_to_move} cards` : "Nothing to move";
+  } catch (e) {
+    moveStatus(escapeHtml(e.message), "error");
+  }
+}
+
+async function confirmMove() {
+  const target = $("#move-target").value.trim();
+  const confirmBtn = $('#move-dialog [data-act="confirm"]');
+  if (!target || target !== moveUi.previewed) { previewMove(); return; }
+  confirmBtn.disabled = true;
+  moveStatus("Moving cards in Anki…");
+  try {
+    const r = await postJson("/api/move", { nids: moveUi.nids, target, label: moveUi.label });
+    moveUi.lastMoveId = r.id;
+    moveUi.previewed = "";
+    $("#move-preview").innerHTML = "";
+    $("#move-cards").innerHTML = "";
+    confirmBtn.textContent = "Move cards";
+    moveStatus(r.moved
+      ? `Moved <b>${r.moved}</b> card${r.moved === 1 ? "" : "s"} to <b>${escapeHtml(r.target)}</b>.
+         <button type="button" class="move-undo" data-id="${escapeHtml(r.id)}">Undo</button>`
+      : "Those cards were already in that deck. Nothing changed.", "ok");
+    $("#move-status .move-undo")?.addEventListener("click", (e) => undoMove(e.target.dataset.id));
+    loadDecks();
+    if ($("#move-dialog .move-history")?.open) loadMoveHistory();
+  } catch (e) {
+    moveStatus(escapeHtml(e.message), "error");
+    confirmBtn.disabled = false;
+  }
+}
+
+async function undoMove(id) {
+  moveStatus("Putting cards back…");
+  try {
+    const r = await postJson(`/api/moves/${encodeURIComponent(id)}/undo`, {});
+    const skipped = r.skipped
+      ? ` ${r.skipped} card${r.skipped === 1 ? " was" : "s were"} left alone because ${r.skipped === 1 ? "it was" : "they were"} moved again since.` : "";
+    moveStatus(`Undone: <b>${r.restored}</b> card${r.restored === 1 ? "" : "s"} put back.${skipped}`, "ok");
+    loadDecks();
+    if ($("#move-dialog .move-history")?.open) loadMoveHistory();
+  } catch (e) {
+    moveStatus(escapeHtml(e.message), "error");
+  }
+}
+
+async function loadMoveHistory() {
+  const list = $("#move-history-list");
+  if (!list) return;
+  list.textContent = "Loading…";
+  try {
+    const { moves } = await fetch("/api/moves").then((r) => r.json());
+    if (!moves?.length) { list.innerHTML = `<p class="muted">No changes yet.</p>`; return; }
+    list.innerHTML = moves.map((m) => {
+      const when = new Date((m.created || 0) * 1000).toLocaleString();
+      const from = (m.from_decks || []).join(", ");
+      const action = m.status === "undone"
+        ? `<span class="muted">Undone</span>`
+        : `<button type="button" class="move-undo" data-id="${escapeHtml(m.id)}">Undo</button>`;
+      return `<div class="move-history-row">
+        <div>${m.action === "suspend" || m.action === "unsuspend"
+            ? `<b>${m.cards}</b> cards ${m.action}ed${m.target ? ` in <b>${escapeHtml(m.target)}</b>` : ""}`
+            : `<b>${m.cards}</b> cards → <b>${escapeHtml(m.target)}</b>`}
+          <div class="muted" title="${escapeHtml(from)}">${escapeHtml(when)}${m.label ? ` · “${escapeHtml(m.label)}”` : ""}</div></div>
+        ${action}</div>`;
+    }).join("");
+    list.querySelectorAll(".move-undo").forEach((b) =>
+      b.addEventListener("click", () => undoMove(b.dataset.id)));
+  } catch {
+    list.textContent = "Couldn't load move history.";
+  }
 }
 
 function hideAssistPlan() {
@@ -897,15 +1272,16 @@ function renderTutor() {
     <div class="tutor-shell" id="tutor-shell">
       <div class="tutor-main">
         <div class="tutor-toolbar">
-          <span class="tutor-title">Tutor</span>
-          <button class="tutor-new" type="button" title="Start a new conversation">New chat</button>
+          <span class="tutor-title">${CHAT_UI[state.mode].title}</span>
         </div>
         <div class="tutor-messages" id="tutor-messages"></div>
         <form class="tutor-composer" id="tutor-composer" autocomplete="off">
-          <textarea id="tutor-input" rows="1"
-                    placeholder="Message the tutor…  (Enter to send, Shift+Enter for newline)"
-                    spellcheck="true"></textarea>
-          <button type="submit" class="tutor-send" title="Send">Send</button>
+          <div class="tutor-composer-box">
+            <textarea id="tutor-input" rows="1"
+                      placeholder="${escapeHtml(CHAT_UI[state.mode].placeholder)}"
+                      spellcheck="true"></textarea>
+            <button type="button" class="tutor-send" id="tutor-send"></button>
+          </div>
         </form>
       </div>
       <aside class="tutor-sources-rail" id="tutor-sources-rail" hidden>
@@ -919,7 +1295,7 @@ function renderTutor() {
 
   const input = $("#tutor-input");
   autoGrow(input);
-  input.addEventListener("input", () => autoGrow(input));
+  input.addEventListener("input", () => { autoGrow(input); updateComposerButton(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
@@ -930,7 +1306,12 @@ function renderTutor() {
     e.preventDefault();
     submitTutor();
   });
-  results.querySelector(".tutor-new").addEventListener("click", () => resetTutor());
+  // One button, two jobs (as in ChatGPT / Claude): Send when idle, Stop while
+  // the reply is generating.
+  $("#tutor-send").addEventListener("click", () => {
+    if (state.tutorPending) stopTutor();
+    else submitTutor();
+  });
 
   renderTutorMessages();
   input.focus();
@@ -943,6 +1324,52 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, max) + "px";
 }
 
+const SEND_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const STOP_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor"/></svg>`;
+
+function updateComposerButton() {
+  const btn = $("#tutor-send");
+  if (!btn) return;
+  const stopping = state.tutorPending;
+  const mode = stopping ? "stop" : "send";
+  if (btn.dataset.mode !== mode) {
+    btn.dataset.mode = mode;
+    btn.innerHTML = stopping ? STOP_ICON : SEND_ICON;
+    btn.classList.toggle("is-stop", stopping);
+    btn.title = stopping ? "Stop generating" : "Send message";
+    btn.setAttribute("aria-label", btn.title);
+  }
+  btn.disabled = !stopping && !$("#tutor-input")?.value.trim();
+}
+
+// Stop button: abort the in-flight reply but keep whatever streamed so far,
+// the way ChatGPT and Claude do. Anki Agent only prepares proposals (nothing
+// changes in Anki until the user confirms), so stopping mid-reply is safe.
+function stopTutor() {
+  if (!state.tutorPending) return;
+  const live = state.tutorLive;
+  cancelTutorRequest();
+  const debug = live?.debug;
+  if (debug) {
+    debug.streaming = false;
+    if (!debug.total_ms && live.startedAt) debug.total_ms = Date.now() - live.startedAt;
+  }
+  const partial = (live?.content || "").trim();
+  state.tutorMessages.push({
+    role: "assistant",
+    content: partial,
+    sources: [],
+    debug,
+    thinkingOpen: live?.thinkingOpen,
+    stopped: true,
+    // An empty stopped turn is display-only; a partial answer stays in the
+    // conversation so a follow-up like "continue" has context.
+    error: !partial,
+  });
+  renderTutorMessages();
+  $("#tutor-input")?.focus();
+}
+
 function cancelTutorRequest() {
   ++state.lastReq;
   state.tutorAbort?.abort();
@@ -951,11 +1378,17 @@ function cancelTutorRequest() {
   state.tutorLive = null;
 }
 
-function resetTutor() {
+// Clears the conversation in the current chat tab. The launcher calls this on
+// window hide, which starts both chat tabs fresh.
+function resetTutor({ all = false } = {}) {
   cancelTutorRequest();
   $("#image-viewer").close();
-  state.tutorMessages = [];
-  if (state.mode === "tutor") {
+  if (all) state.chatStore = { tutor: [], agent: [] };
+  if (isChat(state.mode)) {
+    state.chatStore[state.mode] = [];
+    state.tutorMessages = state.chatStore[state.mode];
+  }
+  if (isChat(state.mode)) {
     renderTutorMessages();
     const input = $("#tutor-input");
     if (input) {
@@ -974,14 +1407,13 @@ function renderTutorMessages() {
   const thinkingScroll = new Map(Array.from(list.querySelectorAll(".tutor-thinking-body"),
     (body) => [body.parentElement.dataset.messageIndex, body.scrollTop]));
   renderTutorSources();
+  updateComposerButton();
   if (!state.tutorMessages.length && !state.tutorPending) {
     list.innerHTML = `
       <div class="tutor-empty">
-        <div class="tutor-empty-title">Ask the tutor anything</div>
+        <div class="tutor-empty-title">${CHAT_UI[state.mode]?.emptyTitle || ""}</div>
         <div class="tutor-empty-sub">
-          The tutor searches your deck and grounds its answer in real cards,
-          citing them inline — sources show on the right.
-          Closing the launcher will start a fresh conversation.
+          ${CHAT_UI[state.mode]?.emptySub || ""}
         </div>
       </div>
     `;
@@ -992,7 +1424,7 @@ function renderTutorMessages() {
   for (let i = 0; i < state.tutorMessages.length; i++) {
     const m = state.tutorMessages[i];
     const isLatest = !state.tutorPending && i === lastIdx;
-    parts.push(renderTutorBubble(m.role, m.content, isLatest, m.sources, m.debug, m.thinkingOpen, i));
+    parts.push(renderTutorBubble(m.role, m.content, isLatest, m.sources, m.debug, m.thinkingOpen, i, false, m.proposals, m.stopped));
   }
   if (state.tutorPending) {
     const live = state.tutorLive;
@@ -1001,6 +1433,18 @@ function renderTutorMessages() {
   }
   list.innerHTML = parts.join("");
   wireTutorCitations(list);
+  list.querySelectorAll(".move-proposal-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const msg = state.tutorMessages[Number(btn.dataset.messageIndex)];
+      const p = msg?.proposals?.[Number(btn.dataset.proposal)];
+      if (!p) return;
+      // Label the history entry with the student's request (the turn before).
+      const request = state.tutorMessages[Number(btn.dataset.messageIndex) - 1];
+      if (p.action === "undo") runUndoProposal(p);
+      else if (p.action === "suspend" || p.action === "unsuspend") openCardActionDialog(p, request);
+      else openMoveDialog({ nids: p.nids, target: p.target, label: p.selection });
+    });
+  });
   list.querySelectorAll(".tutor-thinking").forEach((panel) => {
     const index = Number(panel.dataset.messageIndex);
     const message = state.tutorMessages[index] || state.tutorLive;
@@ -1030,7 +1474,7 @@ function renderTutorMessages() {
   }
 }
 
-function renderTutorBubble(role, content, isLatest = false, sources, debug, thinkingOpen = false, messageIndex = 0, streaming = false) {
+function renderTutorBubble(role, content, isLatest = false, sources, debug, thinkingOpen = false, messageIndex = 0, streaming = false, proposals = [], stopped = false) {
   let body;
   if (streaming) {
     // Incomplete Markdown and citations become interactive only on completion.
@@ -1051,9 +1495,86 @@ function renderTutorBubble(role, content, isLatest = false, sources, debug, thin
   const latestCls = isLatest ? " tutor-msg-latest" : "";
   return `
     <div class="tutor-msg ${cls}${latestCls}"${streaming ? " data-tutor-live" : ""}>
-      <div class="tutor-bubble">${role === "assistant" ? renderTutorThinking(debug, thinkingOpen, messageIndex) : ""}${body}</div>
+      <div class="tutor-bubble">${role === "assistant" ? renderTutorThinking(debug, thinkingOpen, messageIndex) : ""}${body}${renderMoveProposals(proposals, messageIndex)}${stopped ? '<div class="tutor-stopped">Stopped</div>' : ""}</div>
     </div>
   `;
+}
+
+// A card move the agent prepared. The button opens the same preview/confirm
+// dialog as "Move to deck…"; nothing moves until the user confirms there.
+function describeChange(c) {
+  const cards = `<b>${Number(c.cards) || 0}</b> card${c.cards === 1 ? "" : "s"}`;
+  const what = c.action === "suspend" || c.action === "unsuspend"
+    ? `${cards} ${c.action}ed${c.target ? ` in <b>${escapeHtml(c.target)}</b>` : ""}`
+    : `${cards} moved to <b>${escapeHtml(c.target || "")}</b>`;
+  return `${what}${c.label ? `<div class="move-proposal-sel">“${escapeHtml(c.label)}”</div>` : ""}`;
+}
+
+function renderUndoProposal(p, i, messageIndex) {
+  const items = (p.changes || []).map((c) => `<li>${describeChange(c)}</li>`).join("");
+  return `
+    <div class="move-proposal move-proposal-undo">
+      <div class="move-proposal-text">
+        Undo ${p.changes.length} change${p.changes.length === 1 ? "" : "s"}:
+        <ul class="move-proposal-changes">${items}</ul>
+        ${p.result ? `<div class="move-proposal-result">${p.result}</div>` : ""}
+      </div>
+      <button type="button" class="move-primary move-proposal-btn"
+              data-message-index="${messageIndex}" data-proposal="${i}"
+              ${p.done ? "disabled" : ""}>${p.done ? "Undone" : "Review &amp; undo…"}</button>
+    </div>`;
+}
+
+// Undo the changes an Anki Agent proposal names, newest first, after the
+// student confirms. Uses the same undo endpoint as the move history.
+async function runUndoProposal(p) {
+  if (p.done || p.running) return;
+  const list = (p.changes || []).map((c) => "• " + (c.action === "move" || !c.action
+    ? `${c.cards} cards moved to ${c.target}` : `${c.cards} cards ${c.action}ed${c.target ? ` in ${c.target}` : ""}`)).join("\n");
+  if (!window.confirm(`Undo these changes in Anki?\n\n${list}`)) return;
+  p.running = true;
+  p.result = "Undoing…";
+  renderTutorMessages();
+  const lines = [];
+  let failed = false;
+  for (const c of p.changes || []) {
+    try {
+      const r = await postJson(`/api/moves/${encodeURIComponent(c.id)}/undo`, {});
+      const skipped = r.skipped ? ` (${r.skipped} left alone: changed again since)` : "";
+      lines.push(`Undone: ${r.restored} card${r.restored === 1 ? "" : "s"} restored${skipped}.`);
+    } catch (e) {
+      failed = true;
+      lines.push(`Couldn't undo one change: ${escapeHtml(e.message)}`);
+    }
+  }
+  p.running = false;
+  p.done = !failed;
+  p.result = lines.join("<br>");
+  loadDecks();
+  renderTutorMessages();
+}
+
+function renderMoveProposals(proposals, messageIndex) {
+  if (!proposals?.length) return "";
+  return proposals.map((p, i) => p.action === "undo" ? renderUndoProposal(p, i, messageIndex)
+    : (p.action === "suspend" || p.action === "unsuspend") ? `
+    <div class="move-proposal">
+      <div class="move-proposal-text">
+        ${p.action === "suspend" ? "Suspend" : "Unsuspend"} <b>${p.count}</b> card${p.count === 1 ? "" : "s"}${p.deck ? ` in <b>${escapeHtml(p.deck)}</b>` : ""}
+        ${p.except_selection ? `<div class="move-proposal-sel">Keeping ${p.kept} card${p.kept === 1 ? "" : "s"} about “${escapeHtml(p.except_selection)}”</div>` : ""}
+        ${p.selection ? `<div class="move-proposal-sel">${escapeHtml(p.selection)}</div>` : ""}
+      </div>
+      <button type="button" class="move-primary move-proposal-btn"
+              data-message-index="${messageIndex}" data-proposal="${i}">Review &amp; ${p.action}…</button>
+    </div>` : `
+    <div class="move-proposal">
+      <div class="move-proposal-text">
+        <b>${p.count}</b> note${p.count === 1 ? "" : "s"} → <b>${escapeHtml(p.target)}</b>${p.target_exists ? "" : ' <span class="move-proposal-new">new deck</span>'}
+        <div class="move-proposal-sel">${escapeHtml(p.selection)}</div>
+      </div>
+      <button type="button" class="move-primary move-proposal-btn"
+              data-message-index="${messageIndex}" data-proposal="${i}">Review &amp; move…</button>
+    </div>`).join("");
 }
 
 function renderTutorThinking(debug, open = false, messageIndex = 0) {
@@ -1275,21 +1796,22 @@ async function submitTutor() {
   input.value = "";
   autoGrow(input);
   state.tutorPending = true;
-  state.tutorLive = {content: "", thinkingOpen: false, debug: {
+  state.tutorLive = {content: "", thinkingOpen: false, startedAt: Date.now(), debug: {
     model: state.model, streaming: true, thinking: [], response_retries: 0,
   }};
   renderTutorMessages();
 
   const reqId = ++state.lastReq;
+  const chatMode = state.mode;              // Tutor or Anki Agent
   const controller = new AbortController();
   state.tutorAbort = controller;
   let renderTimer = null;
   const renderProgress = (event) => {
-    if (reqId !== state.lastReq || state.mode !== "tutor") return;
+    if (reqId !== state.lastReq || state.mode !== chatMode) return;
     applyTutorEvent(event);
     if (renderTimer === null) renderTimer = setTimeout(() => {
       renderTimer = null;
-      if (reqId === state.lastReq && state.mode === "tutor") renderTutorProgress();
+      if (reqId === state.lastReq && state.mode === chatMode) renderTutorProgress();
     }, 50);
   };
   // Only conversation text belongs in the next model request. UI errors and
@@ -1298,7 +1820,7 @@ async function submitTutor() {
     .filter((m) => !m.error)
     .map(({ role, content }) => ({ role, content }));
   try {
-    const res = await fetch("/api/tutor", {
+    const res = await fetch(CHAT_UI[chatMode].endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
@@ -1306,7 +1828,7 @@ async function submitTutor() {
     });
     const data = res.headers?.get("content-type")?.includes("text/event-stream")
       ? await readTutorStream(res, renderProgress) : await res.json();
-    if (reqId !== state.lastReq || state.mode !== "tutor") return;
+    if (reqId !== state.lastReq || state.mode !== chatMode) return;
     clearTimeout(renderTimer);
     state.tutorPending = false;
     const thinkingOpen = state.tutorLive?.thinkingOpen;
@@ -1327,6 +1849,7 @@ async function submitTutor() {
         role: "assistant",
         content: data.answer || "(no response)",
         sources: data.sources || [],
+        proposals: data.proposals || [],
         debug: data.debug,
         thinkingOpen,
       });
@@ -1334,7 +1857,7 @@ async function submitTutor() {
     renderTutorMessages();
     input.focus();
   } catch (e) {
-    if (reqId !== state.lastReq || state.mode !== "tutor" || e.name === "AbortError") return;
+    if (reqId !== state.lastReq || state.mode !== chatMode || e.name === "AbortError") return;
     state.tutorPending = false;
     const debug = state.tutorLive?.debug;
     if (debug) debug.streaming = false;
@@ -1519,8 +2042,9 @@ function renderNote(note, opts = {}) {
     }
   });
 
-  // Tag chip clicks -> add exact-match filter
-  el.querySelectorAll(".tag-chip[data-tag]").forEach((chip) => {
+  // Tag chip clicks -> add exact-match filter (not inside a preview dialog,
+  // where it would silently change the search behind it).
+  if (!opts.inDialog) el.querySelectorAll(".tag-chip[data-tag]").forEach((chip) => {
     chip.addEventListener("click", () => {
       toggleTagFilter(chip.dataset.tag);
       runCurrent();
@@ -1529,7 +2053,7 @@ function renderNote(note, opts = {}) {
 
   // Deck breadcrumb click -> scope the search to that deck.
   const deckEl = el.querySelector(".note-deck[data-deck]");
-  if (deckEl) {
+  if (deckEl && !opts.inDialog) {
     deckEl.addEventListener("click", () => selectDeck(deckEl.dataset.deck));
   }
 

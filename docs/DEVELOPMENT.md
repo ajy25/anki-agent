@@ -59,12 +59,13 @@ Never commit `.env`, API keys, collections, or personal logs. See [`.env.example
 ## Study features
 
 - Search supports keywords and tag filters. AI assist and Deep search add natural-language retrieval.
-- Tutor replies stream and cite source cards. Failed responses retry up to three times after the initial attempt, for at most four attempts.
-- Tutor, AI assist, and Deep search expose model-returned reasoning and tool activity in a collapsible **Thinking** panel. If no reasoning is returned, the panel states that. Keyword search does not invoke the model.
+- **Tutor** (`/api/tutor`, `tutor_chat`) streams replies that cite source cards. It is read-only: its tools are `search_deck` and `read_note`. Failed responses retry up to three times after the initial attempt, for at most four attempts.
+- Tutor, Anki Agent, AI assist, and Deep search expose model-returned reasoning and tool activity in a collapsible **Thinking** panel. If no reasoning is returned, the panel states that. Keyword search does not invoke the model.
 - The desktop **Settings → AI model** menu and browser model picker share model selection behavior. Selection is remembered on the device and applies to subsequent requests.
+- **Move to deck** moves every card of the current results into another deck through [AnkiConnect](https://ankiweb.net/shared/info/2055492159) (Anki must be running). The **Anki Agent** tab (`/api/agent`, `agent_chat`) is the only chat that can prepare changes: `propose_move` and `propose_card_action` (suspend/unsuspend, e.g. "in my GI deck, suspend everything except GERD"). They find cards (browsing the tag tree) and match deck names, and return proposals; nothing changes until the user confirms the preview, which lists every affected card (compact rows that expand to the full card, 50 at a time, via `/api/notes`). Each move's original decks are logged to `move_history.json` in the app data folder (newest 50 kept) for undo. Set `ANKICONNECT_URL` for a non-default address.
 - Card images load from `collection.media` beside the collection. For another media location, set `MEDIA_DIR`. Clicking an image opens a larger view.
 
-The collection is read without modification. AI features send questions and relevant card text to Groq. Citations help verify answers; they do not guarantee correctness.
+The collection is read without modification, except for moves the user confirms, which go through AnkiConnect. AI features send questions and relevant card text to Groq. Citations help verify answers; they do not guarantee correctness.
 
 ## Refresh the source app's index
 
@@ -114,6 +115,8 @@ ankiagent/
   search.py             Keyword and tag search
   llm.py                AI search and tutor
   llm_client.py         Model/provider clients
+  anki_connect.py       AnkiConnect client (the only code that writes to Anki)
+  organize.py           Move / suspend preview, apply, and the undo log
   templates/            HTML pages
   static/               Styles and scripts
 packaging/              Standalone Mac builds and release instructions

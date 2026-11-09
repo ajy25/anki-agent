@@ -17,7 +17,7 @@
     </div>
     <label class="model-picker" for="model-select">
       <span>Model</span>
-      <select id="model-select" title="Model for Tutor, AI assist, and Deep search">
+      <select id="model-select" title="Model for Tutor, Anki Agent, AI assist, and Deep search">
         {% for model_id, label in models.items() %}
         <option value="{{ model_id }}"{% if model_id == default_model %} selected{% endif %}>{{ label }}</option>
         {% endfor %}
@@ -34,6 +34,10 @@
       <button class="mode-btn" data-mode="tutor" role="tab" aria-selected="false" title="Multi-turn tutor that grounds its answers in your deck and cites the cards">
         <span class="mode-dot"></span>Tutor
         <span class="mode-sub">cited</span>
+      </button>
+      <button class="mode-btn" data-mode="agent" role="tab" aria-selected="false" title="Ask Anki Agent to move, suspend, or unsuspend cards. You preview every card and confirm before anything changes.">
+        <span class="mode-dot"></span>Anki Agent
+        <span class="mode-sub">organize</span>
       </button>
     </div>
   </header>
@@ -88,6 +92,10 @@
                   title="Copy every result's note ID as an Anki search (nid:1,2,3) — paste into the Anki browser to list them all">
             Copy Anki search
           </button>
+          <button id="move-to-deck" class="copy-all-ids" type="button" hidden
+                  title="Move every result's cards into another Anki deck (preview first; undo available)">
+            Move to deck…
+          </button>
           <span id="result-timing"></span>
         </span>
       </div>
@@ -102,6 +110,8 @@
     </button>
     <img class="image-viewer-image" alt="" />
   </dialog>
+
+  <dialog id="move-dialog" class="move-dialog" aria-label="Move cards to a deck"></dialog>
 
   <script src="{{ url_for('static', filename='marked.min.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

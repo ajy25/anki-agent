@@ -127,7 +127,7 @@ Version **1.3.1** fixes a crash that could happen after saving Setup with the op
 | No profiles, an empty deck list, or the wrong cards | Open Anki and check the profile and deck. Sync, then return to Setup, click **Refresh**, and choose that profile and deck. Use **Browse…** if needed. |
 | Could not read the collection | Finish syncing and quit Anki, then choose its `collection.anki2` again. If it still fails, contact the maintainer with the exact message. |
 | Still preparing the deck | Keep the app open. If it never finishes or shows an error, note the message, fully quit, and reopen. Report the message if the problem repeats. |
-| AI requests fail after setup | Check your connection and test the saved key in Setup. Groq account limits or service issues may also cause failures. Tutor retries automatically; if it still fails, wait and try again. |
+| AI requests fail after setup | Check your connection and test the saved key in Setup. Groq account limits or service issues may also cause failures. Anki Agent retries automatically; if it still fails, wait and try again. |
 | Card images are missing | Open Anki and let media syncing finish. Keep `collection.media` beside `collection.anki2`, then quit and reopen Anki Agent. |
 | The app quits when saving Setup | Use version **1.3.1** or later. If it still happens, report your macOS version, app version, and what you clicked. |
 

@@ -112,9 +112,7 @@ class DesktopManager:
         ingest.CACHE_DIR = self.store.root / "cache"
         ingest.DB_PATH = ingest.CACHE_DIR / "anki.db"
         search.DB_PATH = ingest.DB_PATH
-        if search._CONN is not None:
-            search._CONN.close()
-            search._CONN = None
+        search.reset_conn()
         # The first import builds the index here, on the background thread.
         module = importlib.import_module("ankiagent.app")
         ingest.ensure_built()
