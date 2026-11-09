@@ -11,23 +11,27 @@ const source = fs.readFileSync(path.join(__dirname, "../ankiagent/static/app.js"
 function fixture({ render = false } = {}) {
   const nodes = new Map();
   const requests = [];
+  const storage = new Map();
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
-      value: "", style: {}, scrollHeight: 24, innerHTML: "old source", hidden: false,
-      focus() {}, close() {}, appendChild() {},
-      addEventListener() {}, insertAdjacentHTML(_where, html) { this.innerHTML += html; },
+      value: "", style: { setProperty(key, value) { this[key] = value; } }, dataset: {}, scrollHeight: 24, innerHTML: "old source", hidden: false,
+      focus() {}, close() { this.open = false; }, showModal() { this.open = true; }, appendChild() {},
+      listeners: {}, addEventListener(name, handler) { this.listeners[name] = handler; },
+      insertAdjacentHTML(_where, html) { this.innerHTML += html; },
       querySelectorAll() { return []; }, querySelector() { return null; },
-      classList: { add() {}, remove() {} },
+      classList: { add() {}, remove() {}, toggle() {} },
+      setAttribute(name, value) { this[name] = String(value); },
     });
     return nodes.get(selector);
   }
   const context = vm.createContext({
     document: { querySelector: node }, window: {}, console, AbortController,
+    localStorage: {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)},
     TextDecoder, setTimeout, clearTimeout,
     performance, URLSearchParams,
     fetch: (url, options = {}) => new Promise((resolve, reject) => requests.push({
       url, payload: options.body ? JSON.parse(options.body) : null, signal: options.signal, reject,
-      respond: (data) => resolve({ json: async () => data }),
+      respond: (data, status = 200) => resolve({ ok: status < 400, status, json: async () => data }),
       respondStream: () => {
         let controller;
         const body = new ReadableStream({ start(c) { controller = c; } });
@@ -56,6 +60,123 @@ function fixture({ render = false } = {}) {
   }
   return { node, requests, run, state, send };
 }
+
+test("Tutor text size updates immediately, persists across renders, and rejects invalid values", () => {
+  const f = fixture();
+  assert.equal(f.run("readTutorTextScale()"), 1);
+  assert.equal(f.run("setTutorTextScale('1.5')"), true);
+  assert.equal(f.node("#tutor-shell").style["--tutor-text-scale"], "1.5");
+  f.run("renderTutor()");
+  assert.equal(f.node("#tutor-text-size").value, "1.5");
+  assert.equal(f.run("setTutorTextScale('999')"), false);
+  assert.equal(f.run("readTutorTextScale()"), 1.5);
+  f.run('state.mode = "agent"');
+  f.node("#tutor-shell").style["--tutor-text-scale"] = "1";
+  f.run("applyTutorTextScale(1.5)");
+  assert.equal(f.node("#tutor-shell").style["--tutor-text-scale"], "1");
+});
+
+test("Tutor settings load, restore defaults in the editor, and save edited instructions", async () => {
+  const f = fixture();
+  f.run("bindTutorSettings()");
+  const opening = f.run("openTutorSettings()");
+  const defaults = {system_prompt: "Default prompt", first_turn_format: "Default first reply"};
+  f.requests[0].respond({settings: {system_prompt: "Saved prompt", first_turn_format: ""}, defaults});
+  await opening;
+  assert.equal(f.node("#tutor-system-prompt").value, "Saved prompt");
+  f.node("#tutor-prompt-reset").listeners.click();
+  assert.equal(f.node("#tutor-system-prompt").value, "Default prompt");
+  assert.equal(f.requests.length, 1); // Reset is a draft until Save.
+  f.node("#tutor-system-prompt").value = "Explain with examples.";
+  f.node("#tutor-first-turn").value = "";
+  const saving = f.node("#tutor-settings-form").listeners.submit({preventDefault() {}});
+  assert.deepEqual(f.requests[1].payload, {system_prompt: "Explain with examples.", first_turn_format: ""});
+  f.requests[1].respond({settings: f.requests[1].payload, defaults});
+  await saving;
+  assert.match(f.node("#tutor-settings-status").textContent, /Saved/);
+  assert.equal(f.node("#tutor-prompt-fields").disabled, false);
+});
+
+test("Failed Tutor settings saves retain edits and allow another attempt", async () => {
+  const f = fixture();
+  f.node("#tutor-settings-dialog").showModal();
+  f.node("#tutor-system-prompt").value = "My unsaved instructions";
+  const saving = f.run("saveTutorSettings({preventDefault() {}})");
+  f.requests[0].respond({error: "Couldn't save settings."}, 500);
+  await saving;
+  assert.equal(f.node("#tutor-system-prompt").value, "My unsaved instructions");
+  assert.equal(f.node("#tutor-prompt-fields").disabled, false);
+  assert.match(f.node("#tutor-settings-status").textContent, /Couldn't save/);
+});
+
+test("A stale settings load cannot overwrite a reopened editor", async () => {
+  const f = fixture();
+  const old = f.run("openTutorSettings()");
+  f.node("#tutor-settings-dialog").close();
+  const current = f.run("openTutorSettings()");
+  const defaults = {system_prompt: "Default", first_turn_format: ""};
+  f.requests[1].respond({settings: {system_prompt: "Current", first_turn_format: ""}, defaults});
+  await current;
+  f.requests[0].respond({settings: {system_prompt: "Old", first_turn_format: ""}, defaults});
+  await old;
+  assert.equal(f.node("#tutor-system-prompt").value, "Current");
+});
+
+test("Organize checks on entry and shows setup instructions when Anki is unavailable", async () => {
+  const f = fixture();
+  f.run('state.mode = "agent"; renderTutor();');
+  assert.equal(f.requests[0].url, "/api/anki/status");
+  assert.match(f.node("#results").innerHTML, /Tools → Add-ons → Get Add-ons/);
+  assert.match(f.node("#results").innerHTML, /2055492159/);
+  assert.equal(f.node("#organize-check-again").disabled, true);
+  f.requests[0].respond({error: "Couldn't reach Anki."}, 503);
+  await new Promise(setImmediate);
+  assert.equal(f.node("#organize-connection").dataset.state, "unavailable");
+  assert.equal(f.node("#organize-connection-help").hidden, false);
+  assert.equal(f.node("#organize-check-again").textContent, "Check again");
+  assert.equal(f.node("#organize-check-again").disabled, false);
+  const retry = f.run("checkOrganizeConnection()");
+  f.requests[1].respond({connected: true});
+  await retry;
+  assert.equal(f.node("#organize-connection").dataset.state, "connected");
+  assert.equal(f.node("#organize-connection-help").hidden, true);
+  assert.equal(f.node("#organize-check-again").hidden, true);
+});
+
+test("Tutor does not check AnkiConnect or display Organize setup", () => {
+  const f = fixture();
+  f.run("renderTutor()");
+  assert.equal(f.requests.length, 0);
+  assert.doesNotMatch(f.node("#results").innerHTML, /organize-connection/);
+});
+
+test("Connection failures allow retry and insert error text without interpreting HTML", async () => {
+  const f = fixture();
+  f.run('state.mode = "agent"');
+  const pending = f.run("checkOrganizeConnection()");
+  f.requests[0].reject(new Error("<img src=x onerror=alert(1)>"));
+  await pending;
+  assert.equal(f.node("#organize-connection-status").textContent, "<img src=x onerror=alert(1)>");
+  assert.equal(f.node("#organize-check-again").disabled, false);
+  assert.equal(f.node("#organize-connection-help").hidden, false);
+});
+
+test("Stale connection checks cannot overwrite newer results or update Tutor", async () => {
+  const f = fixture();
+  f.run('state.mode = "agent"');
+  const old = f.run("checkOrganizeConnection()");
+  const latest = f.run("checkOrganizeConnection()");
+  f.requests[1].respond({connected: true});
+  await latest;
+  f.requests[0].respond({error: "Old failure"}, 503);
+  await old;
+  assert.equal(f.node("#organize-connection").dataset.state, "connected");
+  const leaving = f.run("checkOrganizeConnection()");
+  f.run('state.mode = "tutor"');
+  f.requests[2].respond({error: "Late failure"}, 503);
+  await leaving;
+  assert.notEqual(f.node("#organize-connection-status").textContent, "Late failure");
+});
 
 test("New chat aborts its request and ignores a reply that arrives afterwards", async () => {
   const f = fixture();

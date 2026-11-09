@@ -39,6 +39,13 @@ class DesktopSettingsTests(unittest.TestCase):
                 launcher.select_model("invalid")
             window.evaluate_js.assert_not_called()
 
+    def test_tutor_settings_menu_opens_the_shared_editor(self):
+        settings, = launcher.settings_menu()
+        action = next(item for item in settings.items if item.title == "Tutor settings…")
+        with patch.object(launcher, "window", Mock()) as window:
+            action.function()
+        self.assertIn("window.openTutorSettings()", window.evaluate_js.call_args.args[0])
+
     def test_local_origin_is_remembered_between_launches(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

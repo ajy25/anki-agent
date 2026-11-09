@@ -1182,7 +1182,7 @@ def _recent_changes_prompt() -> str:
             + "\n".join(lines))
 
 # ---------------------------------------------------------------------------
-# Anki Agent tab: organizes the collection (move / suspend / unsuspend).
+# Organize tab: organizes the collection (move / suspend / unsuspend).
 # Separate from the Tutor, which stays read-only. The model can only PREPARE
 # changes; each one is applied by the student's confirm click in the UI.
 # ---------------------------------------------------------------------------
@@ -1190,7 +1190,7 @@ def _recent_changes_prompt() -> str:
 AGENT_ORGANIZER_TOOLS = TUTOR_TOOLS + [PROPOSE_MOVE_TOOL, PROPOSE_CARD_ACTION_TOOL, PROPOSE_UNDO_TOOL]
 
 AGENT_ORGANIZER_SYSTEM = (
-    "You are Anki Agent, an assistant that organizes a medical student's "
+    "You are the assistant in the Organize tab, helping organize a medical student's "
     "Anki collection. You can prepare three kinds of changes, which the "
     "student reviews in a preview and confirms with a button under your "
     "reply. You never change anything yourself.\n\n"
@@ -1348,9 +1348,11 @@ def tutor_chat(
     Failed responses get up to three retries, each with a fresh search session.
     The tutor is read-only: it has no tools that change the collection.
     """
+    from .tutor_settings import read_prompts
+    preferences = read_prompts()
     return _chat_with_retries(
-        messages, system_prompt=TUTOR_AGENT_SYSTEM, tools=TUTOR_TOOLS,
-        first_turn_format=TUTOR_FIRST_TURN_FORMAT, deck=deck,
+        messages, system_prompt=preferences["system_prompt"], tools=TUTOR_TOOLS,
+        first_turn_format=preferences["first_turn_format"], deck=deck,
         max_iterations=max_iterations, model=model, on_event=on_event, cancelled=cancelled,
     )
 
@@ -1359,7 +1361,7 @@ def agent_chat(
     messages: list[dict], *, deck: str = "", max_iterations: int = 12,
     model: str | None = None, on_event=None, cancelled=None,
 ) -> tuple[str, list[dict], dict]:
-    """Anki Agent tab: prepares moves / suspends from plain-English requests.
+    """Organize tab: prepares moves / suspends from plain-English requests.
 
     Same contract as `tutor_chat`; prepared changes are returned in
     `debug["move_proposals"]` and are applied only by the user's confirm click.
@@ -1377,7 +1379,7 @@ def _chat_with_retries(
     deck: str = "", max_iterations: int = 12,
     model: str | None = None, on_event=None, cancelled=None,
 ) -> tuple[str, list[dict], dict]:
-    """Shared multi-turn loop with retries for the Tutor and Anki Agent tabs."""
+    """Shared multi-turn loop with retries for the Tutor and Organize tabs."""
     base_prompt = system_prompt
     trimmed = (
         messages[-TUTOR_MAX_HISTORY:]

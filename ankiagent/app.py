@@ -12,7 +12,7 @@ GET  /api/decks         deck/subdeck hierarchy with note counts
 GET  /api/stats         index stats
 GET  /media            filename=  (images from Anki's media folder)
 POST /api/tutor         multi-turn deck-grounded tutor (agentic, cited); read-only
-POST /api/agent         "Anki Agent": prepares moves/suspends the user confirms
+POST /api/agent         "Organize": prepares moves/suspends the user confirms
 
 Moving cards (writes to Anki via AnkiConnect; see organize.py)
 GET  /api/anki/decks        live deck names for the move picker
@@ -291,7 +291,7 @@ def api_deep_search():
 # Moving cards between decks (writes to Anki through AnkiConnect)
 # ---------------------------------------------------------------------------
 
-_WRITE_PATHS = ("/api/move", "/api/moves", "/api/cards")
+_WRITE_PATHS = ("/api/move", "/api/moves", "/api/cards", "/api/tutor/settings")
 
 
 @app.before_request
@@ -311,6 +311,22 @@ def _guard_writes():
     return None
 
 
+@app.route("/api/tutor/settings", methods=["GET", "POST"])
+def api_tutor_settings():
+    from .tutor_settings import default_prompts, read_prompts, save_prompts
+    try:
+        settings = save_prompts(request.get_json(silent=True)) if request.method == "POST" else read_prompts()
+        response = jsonify({"settings": settings, "defaults": default_prompts()})
+    except ValueError as error:
+        response = jsonify(error=str(error))
+        response.status_code = 400
+    except OSError:
+        response = jsonify(error="Couldn't save Tutor settings. Please try again.")
+        response.status_code = 500
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def _anki_error(e: Exception):
     from .anki_connect import AnkiConnectError
     if isinstance(e, ValueError):
@@ -319,6 +335,19 @@ def _anki_error(e: Exception):
         return jsonify({"error": str(e), "anki_unavailable": True}), 503
     app.logger.warning("Anki change failed: %s", e)
     return jsonify({"error": "Something went wrong talking to Anki. Nothing was changed."}), 500
+
+
+@app.route("/api/anki/status")
+def api_anki_status():
+    """Quick, read-only connection check for Organize's setup notice."""
+    from . import anki_connect
+    try:
+        version = anki_connect.check(timeout=3.0)
+        response = jsonify({"connected": True, "version": version})
+    except Exception as e:
+        response = app.make_response(_anki_error(e))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/api/anki/decks")
@@ -487,12 +516,12 @@ def _proposals(debug: dict) -> list[dict]:
 
 
 def _chat_endpoint(chat_name: str, *, label: str, proposals: bool):
-    """Shared request handling for the Tutor and Anki Agent chats.
+    """Shared request handling for the Tutor and Organize chats.
 
     Body: {"messages": [{"role": "user"|"assistant", "content": "..."}, ...]}
     The last message must be from the user (the current turn); earlier ones
     are prior conversation turns used for follow-up context.
-    `proposals` adds the changes Anki Agent prepared (never set for Tutor).
+    `proposals` adds the changes Organize prepared (never set for Tutor).
     """
     import importlib
 
@@ -575,11 +604,11 @@ def api_tutor():
 
 @app.route("/api/agent", methods=["POST"])
 def api_agent():
-    """Anki Agent tab: prepares moves / suspends from plain-English requests.
+    """Organize tab: prepares moves / suspends from plain-English requests.
     Returns: {"answer", "sources", "proposals", "debug"} or {"error": ...}.
     Nothing changes until the user confirms a proposal in the UI.
     """
-    return _chat_endpoint("agent_chat", label="Anki Agent", proposals=True)
+    return _chat_endpoint("agent_chat", label="Organize", proposals=True)
 
 
 def main() -> None:

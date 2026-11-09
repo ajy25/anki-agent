@@ -9,7 +9,7 @@ const state = {
   query: "",
   activeTags: new Set(),   // holds full hierarchical tag strings (exact-match)
   lastReq: 0,
-  tutorMessages: [],       // current chat tab's [{role, content}] (Tutor or Anki Agent)
+  tutorMessages: [],       // current chat tab's [{role, content}] (Tutor or Organize)
   chatStore: { tutor: [], agent: [] },   // each chat tab keeps its own conversation
   tutorPending: false,
   tutorAbort: null,        // cancels a request when its conversation is discarded
@@ -26,7 +26,7 @@ const state = {
 };
 
 const VALID_MODES = new Set(["fast", "tutor", "agent"]);
-// Tutor (read-only, cited answers) and Anki Agent (prepares deck changes)
+// Tutor (read-only, cited answers) and Organize (prepares deck changes)
 // share the chat UI; each keeps a separate conversation.
 const isChat = (mode) => mode === "tutor" || mode === "agent";
 const CHAT_UI = {
@@ -39,10 +39,10 @@ const CHAT_UI = {
           Closing the launcher will start a fresh conversation.`,
   },
   agent: {
-    title: "Anki Agent", endpoint: "/api/agent",
-    placeholder: "Tell Anki Agent what to change, e.g. “move all Boards and Beyond GI cards to my GI deck”  (Enter to send)",
+    title: "Organize", endpoint: "/api/agent",
+    placeholder: "Describe what to change, e.g. “move all Boards and Beyond GI cards to my GI deck”  (Enter to send)",
     emptyTitle: "Organize your Anki deck",
-    emptySub: `Ask Anki Agent to move, suspend, or unsuspend cards, e.g.
+    emptySub: `Move, suspend, or unsuspend cards, e.g.
           “put all Boards and Beyond GI cards in my GI deck” or “in my GI deck,
           suspend everything except GERD”. You'll see every card in a preview
           and confirm before anything changes, and you can undo.
@@ -75,6 +75,7 @@ async function boot() {
   window.resetTutor = () => resetTutor({ all: true });
 
   await Promise.all([loadStats(), loadTags(), loadDecks()]);
+  if (qs.get("settings") === "tutor") openTutorSettings();
 }
 
 function applyModeUi() {
@@ -125,6 +126,7 @@ function bindModelPicker() {
 }
 
 function bindUi() {
+  bindTutorSettings();
   bindImageViewer();
   bindModelPicker();
   $("#search-form").addEventListener("submit", (e) => {
@@ -229,7 +231,7 @@ function bindUi() {
   document.addEventListener("keydown", (e) => {
     // Let the modal handle Escape without hiding the desktop app or clearing
     // search. Other app shortcuts must not steal focus from the viewer.
-    if ($("#image-viewer").open || $("#move-dialog")?.open) return;
+    if ($("#image-viewer").open || $("#move-dialog")?.open || $("#tutor-settings-dialog")?.open) return;
     const active = document.activeElement;
     const inField = active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
     if (active?.tagName === "SELECT" && e.key === "Escape") return;
@@ -253,7 +255,7 @@ function bindUi() {
   });
 
   window.addEventListener("focus", () => {
-    if ($("#image-viewer").open || $("#move-dialog")?.open) return;
+    if ($("#image-viewer").open || $("#move-dialog")?.open || $("#tutor-settings-dialog")?.open) return;
     if (isChat(state.mode)) {
       const ti = $("#tutor-input");
       if (ti) ti.focus();
@@ -1058,7 +1060,7 @@ function renderPreviewCard(note) {
   return row;
 }
 
-// Suspend / unsuspend proposal from Anki Agent: fresh preview from Anki, then
+// Suspend / unsuspend proposal from Organize: fresh preview from Anki, then
 // the user confirms. Undo and history are shared with moves.
 async function openCardActionDialog(p, msg) {
   const verb = p.action === "suspend" ? "Suspend" : "Unsuspend";
@@ -1273,7 +1275,29 @@ function renderTutor() {
       <div class="tutor-main">
         <div class="tutor-toolbar">
           <span class="tutor-title">${CHAT_UI[state.mode].title}</span>
+          ${state.mode === "tutor" ? `<div class="tutor-controls">
+            <label for="tutor-text-size">Text size</label>
+            <select id="tutor-text-size">
+              <option value="0.75">Small</option><option value="1">Default</option>
+              <option value="1.25">Large</option><option value="1.5">Extra large</option>
+            </select>
+            <button type="button" id="tutor-open-settings">Settings</button>
+          </div>` : ""}
         </div>
+        ${state.mode === "agent" ? `
+        <section class="organize-connection" id="organize-connection" aria-label="Anki connection">
+          <p id="organize-connection-status" role="status" aria-live="polite">Checking Anki connection…</p>
+          <div id="organize-connection-help" hidden>
+            <p>Organize needs Anki running with the AnkiConnect add-on to move, suspend, or unsuspend cards.</p>
+            <ol>
+              <li>In Anki, open <b>Tools → Add-ons → Get Add-ons…</b></li>
+              <li>Paste <code>2055492159</code> and install <a href="https://ankiweb.net/shared/info/2055492159" target="_blank" rel="noopener noreferrer">AnkiConnect</a>.</li>
+              <li>Restart Anki and open the profile you want to organize. Leave Anki open, then check again.</li>
+            </ol>
+            <p>Already installed? Open Anki, or update AnkiConnect under Tools → Add-ons if needed. Search and Tutor work without it.</p>
+          </div>
+          <button type="button" id="organize-check-again" disabled>Checking…</button>
+        </section>` : ""}
         <div class="tutor-messages" id="tutor-messages"></div>
         <form class="tutor-composer" id="tutor-composer" autocomplete="off">
           <div class="tutor-composer-box">
@@ -1314,7 +1338,149 @@ function renderTutor() {
   });
 
   renderTutorMessages();
+  if (state.mode === "tutor") {
+    applyTutorTextScale(readTutorTextScale());
+    $("#tutor-text-size").addEventListener("change", (event) => setTutorTextScale(event.target.value));
+    $("#tutor-open-settings").addEventListener("click", openTutorSettings);
+  }
+  if (state.mode === "agent") {
+    $("#organize-check-again").addEventListener("click", checkOrganizeConnection);
+    checkOrganizeConnection();
+  }
   input.focus();
+}
+
+const TUTOR_TEXT_SCALES = [0.75, 1, 1.25, 1.5];
+
+function readTutorTextScale() {
+  try {
+    const value = Number(localStorage.getItem("ankiagent.tutorTextScale"));
+    return TUTOR_TEXT_SCALES.includes(value) ? value : 1;
+  } catch { return 1; }
+}
+
+function applyTutorTextScale(value) {
+  if (state.mode === "tutor") {
+    $("#tutor-shell")?.style.setProperty("--tutor-text-scale", String(value));
+    const picker = $("#tutor-text-size");
+    if (picker) picker.value = String(value);
+  }
+  const settingsPicker = $("#tutor-settings-size");
+  if (settingsPicker) settingsPicker.value = String(value);
+}
+
+function setTutorTextScale(raw) {
+  const value = Number(raw);
+  if (!TUTOR_TEXT_SCALES.includes(value)) return false;
+  try { localStorage.setItem("ankiagent.tutorTextScale", String(value)); } catch { /* Still resize this view. */ }
+  applyTutorTextScale(value);
+  return true;
+}
+
+let tutorSettingsRequest = 0;
+let tutorPromptDefaults = null;
+
+function bindTutorSettings() {
+  window.openTutorSettings = openTutorSettings;
+  $("#tutor-settings-close").addEventListener("click", () => $("#tutor-settings-dialog").close());
+  $("#tutor-settings-size").addEventListener("change", (event) => setTutorTextScale(event.target.value));
+  $("#tutor-prompt-reset").addEventListener("click", () => {
+    if (!tutorPromptDefaults) return;
+    $("#tutor-system-prompt").value = tutorPromptDefaults.system_prompt;
+    $("#tutor-first-turn").value = tutorPromptDefaults.first_turn_format;
+    $("#tutor-settings-status").textContent = "Defaults restored in the editor. Click Save instructions to apply.";
+  });
+  $("#tutor-settings-form").addEventListener("submit", saveTutorSettings);
+}
+
+async function openTutorSettings() {
+  const dialog = $("#tutor-settings-dialog");
+  if (dialog.open) return;
+  dialog.showModal();
+  applyTutorTextScale(readTutorTextScale());
+  const request = ++tutorSettingsRequest;
+  tutorPromptDefaults = null;
+  $("#tutor-prompt-fields").disabled = true;
+  $("#tutor-system-prompt").value = "";
+  $("#tutor-first-turn").value = "";
+  $("#tutor-settings-status").textContent = "Loading Tutor instructions…";
+  try {
+    const response = await fetch("/api/tutor/settings", {cache: "no-store"});
+    const data = await response.json();
+    if (request !== tutorSettingsRequest || !dialog.open) return;
+    if (!response.ok) throw new Error(data.error || "Couldn't load Tutor settings. Close and reopen to try again.");
+    tutorPromptDefaults = data.defaults;
+    $("#tutor-system-prompt").value = data.settings.system_prompt;
+    $("#tutor-first-turn").value = data.settings.first_turn_format;
+    $("#tutor-prompt-fields").disabled = false;
+    $("#tutor-settings-status").textContent = "";
+  } catch (error) {
+    if (request === tutorSettingsRequest && dialog.open) $("#tutor-settings-status").textContent = error.message;
+  }
+}
+
+async function saveTutorSettings(event) {
+  event.preventDefault();
+  const request = ++tutorSettingsRequest;
+  const dialog = $("#tutor-settings-dialog");
+  $("#tutor-prompt-fields").disabled = true;
+  $("#tutor-settings-status").textContent = "Saving instructions…";
+  try {
+    const response = await fetch("/api/tutor/settings", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({system_prompt: $("#tutor-system-prompt").value,
+        first_turn_format: $("#tutor-first-turn").value}),
+    });
+    const data = await response.json();
+    if (request !== tutorSettingsRequest || !dialog.open) return;
+    if (!response.ok) throw new Error(data.error || "Couldn't save Tutor settings. Please try again.");
+    $("#tutor-settings-status").textContent = "Saved. Your next Tutor message will use these instructions.";
+  } catch (error) {
+    if (request === tutorSettingsRequest && dialog.open) $("#tutor-settings-status").textContent = error.message;
+  } finally {
+    if (request === tutorSettingsRequest && dialog.open) $("#tutor-prompt-fields").disabled = false;
+  }
+}
+
+let organizeConnectionCheck = 0;
+
+async function checkOrganizeConnection() {
+  if (state.mode !== "agent") return;
+  const banner = $("#organize-connection");
+  if (!banner) return;
+  const status = $("#organize-connection-status");
+  const help = $("#organize-connection-help");
+  const button = $("#organize-check-again");
+  const request = ++organizeConnectionCheck;
+  const current = () => request === organizeConnectionCheck && state.mode === "agent"
+    && $("#organize-connection") === banner;
+  banner.dataset.state = "checking";
+  status.textContent = "Checking Anki connection…";
+  button.hidden = false;
+  button.disabled = true;
+  button.textContent = "Checking…";
+  try {
+    const response = await fetch("/api/anki/status", {cache: "no-store"});
+    const data = await response.json();
+    if (!current()) return;
+    if (!response.ok || data.connected !== true) {
+      throw new Error(data.error || "Couldn't check the Anki connection. Make sure Anki is open, then try again.");
+    }
+    banner.dataset.state = "connected";
+    status.textContent = "Anki is connected. Organize is ready.";
+    help.hidden = true;
+    button.hidden = true;
+  } catch (error) {
+    if (!current()) return;
+    banner.dataset.state = "unavailable";
+    status.textContent = error.message || "Couldn't check the Anki connection. Please try again.";
+    help.hidden = false;
+  } finally {
+    if (current()) {
+      button.disabled = false;
+      button.textContent = "Check again";
+    }
+  }
 }
 
 function autoGrow(ta) {
@@ -1343,7 +1509,7 @@ function updateComposerButton() {
 }
 
 // Stop button: abort the in-flight reply but keep whatever streamed so far,
-// the way ChatGPT and Claude do. Anki Agent only prepares proposals (nothing
+// the way ChatGPT and Claude do. Organize only prepares proposals (nothing
 // changes in Anki until the user confirms), so stopping mid-reply is safe.
 function stopTutor() {
   if (!state.tutorPending) return;
@@ -1525,7 +1691,7 @@ function renderUndoProposal(p, i, messageIndex) {
     </div>`;
 }
 
-// Undo the changes an Anki Agent proposal names, newest first, after the
+// Undo the changes an Organize proposal names, newest first, after the
 // student confirms. Uses the same undo endpoint as the move history.
 async function runUndoProposal(p) {
   if (p.done || p.running) return;
@@ -1802,7 +1968,7 @@ async function submitTutor() {
   renderTutorMessages();
 
   const reqId = ++state.lastReq;
-  const chatMode = state.mode;              // Tutor or Anki Agent
+  const chatMode = state.mode;              // Tutor or Organize
   const controller = new AbortController();
   state.tutorAbort = controller;
   let renderTimer = null;

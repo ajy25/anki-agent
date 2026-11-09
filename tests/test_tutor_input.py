@@ -4,6 +4,7 @@ from copy import deepcopy
 import importlib
 import json
 import os
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, call, patch
@@ -62,6 +63,17 @@ class TutorInputTests(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_saved_prompts_are_sent_to_the_model_on_the_next_request(self):
+        from ankiagent.tutor_settings import save_prompts
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"ANKIAGENT_DATA_DIR": directory}):
+            save_prompts({"system_prompt": "Explain using short examples.", "first_turn_format": ""})
+            result = self.client.post("/api/tutor", json={"messages": [{"role": "user", "content": CARD}]})
+        self.assertEqual(result.status_code, 200)
+        prompt = self.calls[0]["messages"][0]["content"]
+        self.assertIn("Explain using short examples.", prompt)
+        self.assertNotIn(llm.TUTOR_AGENT_SYSTEM, prompt)
+        self.assertNotIn(llm.TUTOR_FIRST_TURN_FORMAT, prompt)
 
     def test_full_multiline_card_is_the_user_message_for_both_models(self):
         for model in ("openai/gpt-oss-120b", "qwen/qwen3.8-27b"):

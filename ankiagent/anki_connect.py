@@ -36,12 +36,12 @@ def _url() -> str:
     return (os.environ.get("ANKICONNECT_URL") or DEFAULT_URL).strip()
 
 
-def invoke(action: str, **params: Any) -> Any:
+def invoke(action: str, *, timeout: float = TIMEOUT, **params: Any) -> Any:
     """Call one AnkiConnect action and return its `result`."""
     body = json.dumps({"action": action, "version": API_VERSION, "params": params}).encode()
     req = urllib.request.Request(_url(), data=body, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
         raise AnkiConnectError(NOT_RUNNING) from e
@@ -54,9 +54,9 @@ def invoke(action: str, **params: Any) -> Any:
     return payload["result"]
 
 
-def check() -> int:
+def check(*, timeout: float = TIMEOUT) -> int:
     """Return the AnkiConnect API version, or raise if it is unusable."""
-    version = invoke("version")
+    version = invoke("version", timeout=timeout)
     if not isinstance(version, int) or version < API_VERSION:
         raise AnkiConnectError("Your AnkiConnect add-on is too old. Update it in Anki → Tools → Add-ons.")
     return version

@@ -191,6 +191,27 @@ class MoveTests(unittest.TestCase):
 
     # --- errors and guards --------------------------------------------------
 
+    def test_connection_status_only_checks_version_with_short_timeout(self):
+        with patch.object(anki_connect, "check", return_value=6) as check:
+            r = self.client.get("/api/anki/status")
+        check.assert_called_once_with(timeout=3.0)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json(), {"connected": True, "version": 6})
+        self.assertEqual(r.headers["Cache-Control"], "no-store")
+        self.assertEqual(self.fake.calls, [])
+
+    def test_connection_status_reports_unavailable_and_outdated_addons(self):
+        for version in (None, 5):
+            with self.subTest(version=version):
+                with patch.object(anki_connect, "invoke", return_value=version,
+                                  side_effect=anki_connect.AnkiConnectError(anki_connect.NOT_RUNNING)
+                                  if version is None else None):
+                    r = self.client.get("/api/anki/status")
+                self.assertEqual(r.status_code, 503)
+                self.assertTrue(r.get_json()["anki_unavailable"])
+                self.assertIn("AnkiConnect", r.get_json()["error"])
+                self.assertEqual(r.headers["Cache-Control"], "no-store")
+
     def test_anki_not_running_is_reported_clearly(self):
         with patch.object(anki_connect, "invoke", side_effect=anki_connect.AnkiConnectError(anki_connect.NOT_RUNNING)):
             r = self.post("/api/move/preview", {"nids": [1], "target": "GI"})
