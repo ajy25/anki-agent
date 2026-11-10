@@ -894,7 +894,8 @@ function setCopyAllIds(ids) {
 // Confirm -> Undo available. Nothing is written before the Confirm click.
 // ---------------------------------------------------------------------------
 
-const moveUi = { nids: [], label: "", previewed: "", lastMoveId: null };
+let moveDialogGeneration = 0;
+const moveUi = { nids: [], label: "", previewed: "", previewId: null, request: 0, busy: false, lastMoveId: null };
 
 async function postJson(url, body) {
   const r = await fetch(url, {
@@ -916,9 +917,12 @@ function moveStatus(html, kind = "") {
 }
 
 function openMoveDialog({ nids, target = "", label = "" }) {
+  const generation = ++moveDialogGeneration;
   moveUi.nids = [...nids];
   moveUi.label = label || "";
   moveUi.previewed = "";
+  moveUi.previewId = null;
+  moveUi.busy = false;
   moveUi.lastMoveId = null;
   const n = moveUi.nids.length;
   const dlg = $("#move-dialog");
@@ -950,6 +954,8 @@ function openMoveDialog({ nids, target = "", label = "" }) {
   input.addEventListener("input", () => {
     // Any edit invalidates the preview; the user must preview the new target.
     moveUi.previewed = "";
+    moveUi.previewId = null;
+    ++moveUi.request;
     confirmBtn.disabled = true;
     $("#move-preview").innerHTML = "";
   });
@@ -968,10 +974,13 @@ function openMoveDialog({ nids, target = "", label = "" }) {
 
   fetch("/api/anki/decks").then(async (r) => {
     const data = await r.json();
+    if (generation !== moveDialogGeneration || !dlg.open) return;
     if (!r.ok) throw new Error(data.error || "Couldn't load your Anki decks.");
     $("#move-deck-list").innerHTML = (data.decks || [])
       .map((d) => `<option value="${escapeHtml(d)}"></option>`).join("");
-  }).catch((e) => moveStatus(escapeHtml(e.message), "error"));
+  }).catch((e) => {
+    if (generation === moveDialogGeneration && dlg.open) moveStatus(escapeHtml(e.message), "error");
+  });
 
   if (target) previewMove();
 }
@@ -1063,6 +1072,9 @@ function renderPreviewCard(note) {
 // Suspend / unsuspend proposal from Organize: fresh preview from Anki, then
 // the user confirms. Undo and history are shared with moves.
 async function openCardActionDialog(p, msg) {
+  const generation = ++moveDialogGeneration;
+  let previewId = null;
+  let busy = false;
   const verb = p.action === "suspend" ? "Suspend" : "Unsuspend";
   const spec = { action: p.action, deck: p.deck || "", nids: p.nids ?? null, exclude_nids: p.exclude_nids || [] };
   const dlg = $("#move-dialog");
@@ -1077,6 +1089,7 @@ async function openCardActionDialog(p, msg) {
       <div id="move-cards"></div>
       <div class="move-actions">
         <button type="button" class="move-secondary" data-act="close">Close</button>
+        <button type="button" class="move-secondary" data-act="preview" disabled>Preview again</button>
         <button type="button" class="move-primary" data-act="confirm" disabled>${verb} cards</button>
       </div>
       <details class="move-history">
@@ -1085,6 +1098,13 @@ async function openCardActionDialog(p, msg) {
       </details>
     </div>`;
   const confirmBtn = dlg.querySelector('[data-act="confirm"]');
+  const previewBtn = dlg.querySelector('[data-act="preview"]');
+  const current = () => generation === moveDialogGeneration && dlg.open;
+  previewBtn.addEventListener("click", () => {
+    if (busy) return;
+    dlg.close();
+    openCardActionDialog(p, msg);
+  });
   dlg.querySelector('[data-act="close"]').addEventListener("click", () => dlg.close());
   dlg.querySelector(".move-history").addEventListener("toggle", (e) => { if (e.target.open) loadMoveHistory(); });
   dlg.showModal();
@@ -1092,6 +1112,8 @@ async function openCardActionDialog(p, msg) {
   moveStatus("Checking with Anki…");
   try {
     const r = await postJson("/api/cards/preview", spec);
+    if (!current()) return;
+    previewId = r.preview_id;
     moveStatus("");
     $("#move-preview").innerHTML = `
       <p class="move-summary"><b>${r.cards_to_change}</b> card${r.cards_to_change === 1 ? "" : "s"} will be ${p.action}ed.</p>
@@ -1100,17 +1122,25 @@ async function openCardActionDialog(p, msg) {
     const cards = $("#move-cards");
     if (p.except_selection) mountPreviewCards(cards, r.kept_nids || [], `Cards that stay ${p.action === "suspend" ? "active" : "suspended"} (“${p.except_selection}”)`);
     mountPreviewCards(cards, r.change_nids || [], `Cards that will be ${p.action}ed`);
-    confirmBtn.disabled = r.cards_to_change === 0;
+    confirmBtn.disabled = !previewId || r.cards_to_change === 0;
     confirmBtn.textContent = r.cards_to_change ? `${verb} ${r.cards_to_change} cards` : "Nothing to change";
   } catch (e) {
+    if (!current()) return;
     moveStatus(escapeHtml(e.message), "error");
   }
+  previewBtn.disabled = false;
 
   confirmBtn.addEventListener("click", async () => {
+    if (busy || !previewId || !current()) return;
+    busy = true;
+    const token = previewId;
+    previewId = null;
     confirmBtn.disabled = true;
+    previewBtn.disabled = true;
     moveStatus(`${verb === "Suspend" ? "Suspending" : "Unsuspending"} cards in Anki…`);
     try {
-      const r = await postJson("/api/cards/apply", { ...spec, label: msg?.content?.slice(0, 200) || "" });
+      const r = await postJson("/api/cards/apply", { ...spec, preview_id: token, label: msg?.content?.slice(0, 200) || "" });
+      if (!current()) return;
       $("#move-preview").innerHTML = "";
       $("#move-cards").innerHTML = "";
       moveStatus(r.changed
@@ -1120,21 +1150,34 @@ async function openCardActionDialog(p, msg) {
       $("#move-status .move-undo")?.addEventListener("click", (e) => undoMove(e.target.dataset.id));
       if ($("#move-dialog .move-history")?.open) loadMoveHistory();
     } catch (e) {
+      if (!current()) return;
       moveStatus(escapeHtml(e.message), "error");
-      confirmBtn.disabled = false;
+      if ($("#move-dialog .move-history")?.open) loadMoveHistory();
+    } finally {
+      busy = false;
+      if (current()) previewBtn.disabled = false;
     }
   });
 }
 
 async function previewMove() {
+  if (moveUi.busy) return;
+  const generation = moveDialogGeneration;
+  const request = ++moveUi.request;
+  const dlg = $("#move-dialog");
   const target = $("#move-target").value.trim();
   const confirmBtn = $('#move-dialog [data-act="confirm"]');
+  const current = () => generation === moveDialogGeneration && request === moveUi.request
+    && dlg.open && $("#move-target").value.trim() === target;
+  moveUi.previewed = "";
+  moveUi.previewId = null;
+  confirmBtn.disabled = true;
   if (!target) { moveStatus("Choose a destination deck first.", "error"); return; }
   moveStatus("Checking with Anki…");
   confirmBtn.disabled = true;
   try {
     const p = await postJson("/api/move/preview", { nids: moveUi.nids, target });
-    if ($("#move-target").value.trim() !== target) return;   // edited meanwhile
+    if (!current()) return;
     moveStatus("");
     const from = (p.from_decks || []).slice(0, 6).map((d) =>
       `<li><span>${escapeHtml(d.deck)}</span><b>${d.cards}</b></li>`).join("");
@@ -1152,21 +1195,31 @@ async function previewMove() {
       ${from ? `<p class="move-from-label">Currently in:</p><ul class="move-from">${from}${more}</ul>` : ""}
       ${notes.map((t) => `<p class="move-note">${t}</p>`).join("")}`;
     moveUi.previewed = target;
-    confirmBtn.disabled = p.cards_to_move === 0;
+    moveUi.previewId = p.preview_id;
+    confirmBtn.disabled = !moveUi.previewId || p.cards_to_move === 0;
     confirmBtn.textContent = p.cards_to_move ? `Move ${p.cards_to_move} cards` : "Nothing to move";
   } catch (e) {
-    moveStatus(escapeHtml(e.message), "error");
+    if (current()) moveStatus(escapeHtml(e.message), "error");
   }
 }
 
 async function confirmMove() {
+  if (moveUi.busy) return;
+  const generation = moveDialogGeneration;
+  const current = () => generation === moveDialogGeneration && $("#move-dialog").open;
   const target = $("#move-target").value.trim();
   const confirmBtn = $('#move-dialog [data-act="confirm"]');
-  if (!target || target !== moveUi.previewed) { previewMove(); return; }
+  if (!current()) return;
+  if (!target || target !== moveUi.previewed || !moveUi.previewId) { previewMove(); return; }
+  const token = moveUi.previewId;
+  moveUi.previewId = null;
+  moveUi.previewed = "";
+  moveUi.busy = true;
   confirmBtn.disabled = true;
   moveStatus("Moving cards in Anki…");
   try {
-    const r = await postJson("/api/move", { nids: moveUi.nids, target, label: moveUi.label });
+    const r = await postJson("/api/move", { nids: moveUi.nids, target, preview_id: token, label: moveUi.label });
+    if (!current()) return;
     moveUi.lastMoveId = r.id;
     moveUi.previewed = "";
     $("#move-preview").innerHTML = "";
@@ -1180,8 +1233,11 @@ async function confirmMove() {
     loadDecks();
     if ($("#move-dialog .move-history")?.open) loadMoveHistory();
   } catch (e) {
+    if (!current()) return;
     moveStatus(escapeHtml(e.message), "error");
-    confirmBtn.disabled = false;
+    if ($("#move-dialog .move-history")?.open) loadMoveHistory();
+  } finally {
+    if (generation === moveDialogGeneration) moveUi.busy = false;
   }
 }
 
@@ -1217,6 +1273,7 @@ async function loadMoveHistory() {
             ? `<b>${m.cards}</b> cards ${m.action}ed${m.target ? ` in <b>${escapeHtml(m.target)}</b>` : ""}`
             : `<b>${m.cards}</b> cards → <b>${escapeHtml(m.target)}</b>`}
           <div class="muted" title="${escapeHtml(from)}">${escapeHtml(when)}${m.label ? ` · “${escapeHtml(m.label)}”` : ""}</div></div>
+        ${m.status === "pending" || m.status === "uncertain" ? '<span class="muted">Outcome unconfirmed — recovery available</span>' : ""}
         ${action}</div>`;
     }).join("");
     list.querySelectorAll(".move-undo").forEach((b) =>

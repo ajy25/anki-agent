@@ -30,11 +30,14 @@ class FakeAnki:
         }
         self.decks = {"AnKing Step Deck", "AnKing Step Deck::B&B", "AnKing Step Deck::Pathoma", "GI"}
         self.calls = []
+        self.media_path = str(ingest.DECK_PATH.parent / "collection.media")
 
     def invoke(self, action, **p):
         self.calls.append(action)
         if action == "version":
             return 6
+        if action == "getMediaDirPath":
+            return self.media_path
         if action == "deckNames":
             return sorted(self.decks)
         if action == "notesInfo":
@@ -93,6 +96,10 @@ class MoveTests(unittest.TestCase):
         self.client = app_module.app.test_client()
 
     def post(self, url, body=None, **kw):
+        if url == "/api/move" and body and "preview_id" not in body:
+            preview = self.client.post("/api/move/preview", json=body)
+            if preview.status_code == 200:
+                body = {**body, "preview_id": preview.get_json()["preview_id"]}
         return self.client.post(url, json=body or {}, **kw)
 
     # --- validation -------------------------------------------------------
@@ -166,7 +173,8 @@ class MoveTests(unittest.TestCase):
         self.assertEqual(again.status_code, 400)
 
     def test_undo_leaves_cards_that_were_moved_again(self):
-        moved = organize.move_notes([1], "GI")
+        preview = organize.preview_move([1], "GI")
+        moved = organize.move_notes([1], "GI", preview_id=preview["preview_id"])
         self.fake.cards[12] = (1, "Somewhere else")     # user moved it by hand
         undo = organize.undo_move(moved["id"])
         self.assertEqual((undo["restored"], undo["skipped"]), (1, 1))
@@ -182,7 +190,7 @@ class MoveTests(unittest.TestCase):
         with patch.object(anki_connect, "invoke", side_effect=fail_on_change):
             r = self.post("/api/move", {"nids": [1], "target": "GI"})
         self.assertEqual(r.status_code, 503)
-        self.assertEqual(json.loads(organize.history_path().read_text()), [])
+        self.assertEqual(json.loads(organize.history_path().read_text())[0]["status"], "uncertain")
 
     def test_already_in_target_is_a_no_op(self):
         r = self.post("/api/move", {"nids": [3], "target": "GI"}).get_json()
@@ -191,10 +199,10 @@ class MoveTests(unittest.TestCase):
 
     # --- errors and guards --------------------------------------------------
 
-    def test_connection_status_only_checks_version_with_short_timeout(self):
+    def test_connection_status_checks_selected_collection_with_short_timeout(self):
         with patch.object(anki_connect, "check", return_value=6) as check:
             r = self.client.get("/api/anki/status")
-        check.assert_called_once_with(timeout=3.0)
+        check.assert_called_once_with(timeout=3.0, collection_path=ingest.DECK_PATH)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json(), {"connected": True, "version": 6})
         self.assertEqual(r.headers["Cache-Control"], "no-store")

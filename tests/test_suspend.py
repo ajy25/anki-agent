@@ -31,6 +31,7 @@ class FakeAnki:
             401: [4, "AnKing Step Deck", False],          # note 4: GERD, other deck
         }
         self.calls = []
+        self.media_path = str(ingest.DECK_PATH.parent / "collection.media")
 
     def _match(self, cid, query):
         nid, deck, susp = self.cards[cid]
@@ -52,6 +53,8 @@ class FakeAnki:
         self.calls.append(action)
         if action == "version":
             return 6
+        if action == "getMediaDirPath":
+            return self.media_path
         if action == "deckNames":
             return sorted({c[1] for c in self.cards.values()})
         if action == "findCards":
@@ -97,7 +100,7 @@ class SuspendTests(Base):
         self.assertEqual((p["change_nids"], p["kept_nids"]), ([2], [1]))   # for the card lists
         self.assertNotIn("suspend", self.fake.calls)
 
-        r = organize.apply_card_action(spec, label="suspend all but GERD")
+        r = organize.apply_card_action(spec, preview_id=p["preview_id"], label="suspend all but GERD")
         self.assertEqual(r["changed"], 1)
         self.assertEqual(self.fake.suspended(), {201, 301})         # GERD (101,102) kept
         self.assertEqual(organize.list_moves()[0]["action"], "suspend")
@@ -118,7 +121,9 @@ class SuspendTests(Base):
         body = {"action": "suspend", "deck": GI, "exclude_nids": [1]}
         self.assertEqual(client.post("/api/cards/apply", json=body,
                          headers={"Origin": "https://evil.example"}).status_code, 403)
-        self.assertEqual(client.post("/api/cards/preview", json=body).get_json()["cards_to_change"], 1)
+        preview = client.post("/api/cards/preview", json=body).get_json()
+        self.assertEqual(preview["cards_to_change"], 1)
+        body["preview_id"] = preview["preview_id"]
         r = client.post("/api/cards/apply", json=body).get_json()
         self.assertEqual(r["changed"], 1)
         self.assertEqual(client.post(f"/api/moves/{r['id']}/undo", json={}).get_json()["restored"], 1)

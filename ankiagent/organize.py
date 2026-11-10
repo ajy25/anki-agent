@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections import Counter
+from collections import Counter, OrderedDict
 from pathlib import Path
 
 from . import anki_connect as anki
@@ -29,7 +29,73 @@ MAX_NOTES = 20000            # safety bound on the notes one change acts on
 MAX_KEEP_NOTES = 100000      # "everything except ..." lists: kept cards aren't changed
 _DECK_NAME_MAX = 250
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-_lock = threading.Lock()
+_lock = threading.RLock()
+PREVIEW_TTL = 600
+PREVIEW_LIMIT = 100
+_previews: OrderedDict[str, dict] = OrderedDict()
+
+
+class StalePreview(ValueError):
+    """The user must review the selection again before it can be changed."""
+
+
+class ChangeUncertain(anki.AnkiConnectError):
+    """Anki may have applied the write; its recovery record must be retained."""
+
+
+def _collection() -> str:
+    return str(Path(ingest.DECK_PATH).expanduser().resolve())
+
+
+def _check_collection(expected: str | None = None) -> str:
+    current = _collection()
+    if expected is not None and expected != current:
+        raise ValueError("This change belongs to a different collection. Select its profile in Setup first.")
+    anki.check(collection_path=Path(current))
+    return current
+
+
+def _remember_preview(collection: str, selection: dict, snapshot: dict) -> str:
+    with _lock:
+        now = time.monotonic()
+        for key in list(_previews):
+            if now - _previews[key]["created"] >= PREVIEW_TTL:
+                del _previews[key]
+        while len(_previews) >= PREVIEW_LIMIT:
+            _previews.popitem(last=False)
+        token = uuid.uuid4().hex
+        # Copy caller-owned lists, including nested card lists.
+        _previews[token] = json.loads(json.dumps({
+            "created": now, "collection": collection, "selection": selection, "snapshot": snapshot,
+        }))
+        return token
+
+
+def _take_preview(token: str | None, collection: str, selection: dict) -> dict:
+    # Called while holding _lock. One attempt consumes the preview, including
+    # failed or uncertain writes, so a duplicate click cannot apply it twice.
+    preview = _previews.pop(token, None) if isinstance(token, str) else None
+    if (not preview or time.monotonic() - preview["created"] >= PREVIEW_TTL
+            or preview["collection"] != collection or preview["selection"] != selection):
+        raise StalePreview("This preview is missing, expired, or no longer matches. Preview the change again.")
+    return preview["snapshot"]
+
+
+def _require_snapshot(reviewed: dict, current: dict) -> None:
+    if reviewed != current:
+        raise StalePreview("The cards changed since the preview. Nothing was changed by this request. Preview again.")
+
+
+def _uncertain(change_id: str, error: Exception) -> None:
+    # The original pending record still exists if updating its status fails.
+    try:
+        _update_entry(change_id, status="uncertain")
+    except OSError:
+        pass
+    raise ChangeUncertain(
+        "Anki may have applied some or all of this change. Its recovery record is saved in "
+        "Recent changes; check Anki or use Undo there before trying again."
+    ) from error
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +232,11 @@ def _write_history(entries: list[dict]) -> None:
     fd, tmp = tempfile.mkstemp(prefix="moves-", suffix=".json", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(entries[-HISTORY_LIMIT:], f)
+            recent_ids = {e["id"] for e in entries[-HISTORY_LIMIT:]}
+            json.dump([e for e in entries if e["id"] in recent_ids
+                       or e.get("status") in ("pending", "uncertain")], f)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     finally:
         Path(tmp).unlink(missing_ok=True)
@@ -183,7 +253,12 @@ def _update_entry(move_id: str, **changes) -> None:
 def list_moves(limit: int = 10) -> list[dict]:
     """Recent changes (moves, suspends), newest first, without per-card detail."""
     out = []
-    for e in reversed(_read_history()[-limit:]):
+    entries = [e for e in _read_history() if e.get("collection") == _collection()]
+    # Recovery records remain visible even after many subsequent changes.
+    recent_ids = {e["id"] for e in entries[-limit:]}
+    for e in reversed(entries):
+        if e["id"] not in recent_ids and e.get("status") not in ("pending", "uncertain"):
+            continue
         action = e.get("action", "move")
         cards = e.get("cards") or []
         out.append({k: e.get(k) for k in ("id", "created", "target", "label", "status")}
@@ -231,15 +306,25 @@ def _plan(nids: list[int], target: str):
     return by_note, to_move, already
 
 
+def _move_snapshot(by_note: dict, to_move: list, already: int) -> dict:
+    return {"cards": sorted([list(c) for c in to_move]), "already": already,
+            "notes": sorted([[nid, sorted(cards)] for nid, cards in by_note.items()])}
+
+
 def preview_move(nids: list[int], target: str) -> dict:
     """Describe a move without changing anything."""
     target = clean_deck_name(target)
-    anki.check()
+    collection = _check_collection()
     by_note, to_move, already = _plan(nids, target)
     from_counts = Counter(deck for _, _, deck in to_move)
+    target_exists = target in anki.deck_names()
+    _check_collection(collection)
+    token = _remember_preview(collection, {"action": "move", "nids": sorted(nids), "target": target},
+                              _move_snapshot(by_note, to_move, already))
     return {
+        "preview_id": token,
         "target": target,
-        "target_exists": target in anki.deck_names(),
+        "target_exists": target_exists,
         "notes": len(by_note),
         "missing_notes": len(nids) - len(by_note),
         "cards_to_move": len(to_move),
@@ -250,18 +335,21 @@ def preview_move(nids: list[int], target: str) -> dict:
     }
 
 
-def move_notes(nids: list[int], target: str, *, label: str = "") -> dict:
+def move_notes(nids: list[int], target: str, *, preview_id: str | None = None, label: str = "") -> dict:
     """Move every card of `nids` into `target`, logging originals first."""
     target = clean_deck_name(target)
     with _lock:
-        anki.check()
+        collection = _check_collection()
+        reviewed = _take_preview(preview_id, collection,
+                                 {"action": "move", "nids": sorted(nids), "target": target})
         by_note, to_move, already = _plan(nids, target)
+        _require_snapshot(reviewed, _move_snapshot(by_note, to_move, already))
         if not to_move:
             return {"id": None, "moved": 0, "already_in_target": already, "target": target}
         move_id = uuid.uuid4().hex[:12]
         entry = {
             "id": move_id, "created": int(time.time()), "target": target,
-            "label": str(label)[:200], "status": "pending",
+            "label": str(label)[:200], "status": "pending", "collection": collection,
             # [card id, note id, original deck] — enough to restore exactly.
             "cards": [list(c) for c in to_move],
         }
@@ -269,12 +357,17 @@ def move_notes(nids: list[int], target: str, *, label: str = "") -> dict:
         _write_history(_read_history() + [entry])
         try:
             if target not in anki.deck_names():
+                _check_collection(collection)
                 anki.create_deck(target)
+            _check_collection(collection)
             anki.change_deck([cid for cid, _, _ in to_move], target)
-        except Exception:
-            _write_history([e for e in _read_history() if e.get("id") != move_id])
-            raise
-        _update_entry(move_id, status="done")
+            _check_collection(collection)
+            actual = anki.decks_of_cards([cid for cid, _, _ in to_move])
+            if any(actual.get(cid) != target for cid, _, _ in to_move):
+                raise anki.AnkiConnectError("Couldn't verify all moved cards.")
+            _update_entry(move_id, status="done")
+        except Exception as error:
+            _uncertain(move_id, error)
     _sync_cache({nid: {target} for nid in by_note})
     return {"id": move_id, "moved": len(to_move), "already_in_target": already,
             "notes": len(by_note), "target": target}
@@ -292,7 +385,9 @@ def undo_move(move_id: str) -> dict:
             raise ValueError("That move is no longer in the history.")
         if entry.get("status") == "undone":
             raise ValueError("That change was already undone.")
-        anki.check()
+        if not entry.get("collection"):
+            raise ValueError("This older change has no saved profile identity and cannot be safely undone here.")
+        _check_collection(entry["collection"])
         if entry.get("action") in CARD_ACTIONS:
             return _undo_card_action(entry)
         cards = [(int(c), int(n), str(d)) for c, n, d in entry["cards"]]
@@ -308,9 +403,13 @@ def undo_move(move_id: str) -> dict:
                 skipped += 1
                 if cid in current:
                     decks_by_nid.setdefault(nid, set()).add(current[cid])
-        for deck, cids in groups.items():
-            anki.change_deck(cids, deck)
-        _update_entry(move_id, status="undone", undone_at=int(time.time()))
+        try:
+            for deck, cids in groups.items():
+                _check_collection(entry["collection"])
+                anki.change_deck(cids, deck)
+            _update_entry(move_id, status="undone", undone_at=int(time.time()))
+        except Exception as error:
+            _uncertain(move_id, error)
     _sync_cache(decks_by_nid)
     return {"id": move_id, "restored": sum(len(v) for v in groups.values()),
             "skipped": skipped, "decks": sorted(groups)}
@@ -394,7 +493,7 @@ def _kept_cards(spec: dict) -> int:
 
 
 def preview_card_action(spec: dict) -> dict:
-    anki.check()
+    collection = _check_collection()
     if spec["deck"] and spec["deck"] not in anki.deck_names():
         raise ValueError(f"There's no deck named {spec['deck']!r}.")
     change, already = _cards_to_change(spec)
@@ -405,30 +504,49 @@ def preview_card_action(spec: dict) -> dict:
     if spec["deck"] and spec["exclude_nids"]:
         kept_nids = anki.invoke("findNotes", query=_search_term(spec["deck"]) + " nid:"
                                 + ",".join(map(str, spec["exclude_nids"])))
-    return {"action": spec["action"], "deck": spec["deck"], "cards_to_change": len(change),
-            "already": already, "kept": _kept_cards(spec),
+    kept = _kept_cards(spec)
+    _check_collection(collection)
+    token = _remember_preview(collection, spec, {"cards": sorted(change), "already": already})
+    return {"preview_id": token, "action": spec["action"], "deck": spec["deck"], "cards_to_change": len(change),
+            "already": already, "kept": kept,
             "change_nids": sorted(change_nids), "kept_nids": sorted(kept_nids)}
 
 
-def apply_card_action(spec: dict, *, label: str = "") -> dict:
+def _verify_card_state(cards: list[int], action: str, collection: str) -> None:
+    # AnkiConnect versions differ in whether unsuspend returns True or null.
+    # Verify actual card state instead of treating the return value as proof.
+    _check_collection(collection)
+    state = "is:suspended" if action == "suspend" else "-is:suspended"
+    for i in range(0, len(cards), 1000):
+        chunk = cards[i:i + 1000]
+        query = "cid:" + ",".join(map(str, chunk)) + " " + state
+        if set(anki.invoke("findCards", query=query)) != set(chunk):
+            raise anki.AnkiConnectError("Couldn't verify all card changes.")
+    _check_collection(collection)
+
+
+def apply_card_action(spec: dict, *, preview_id: str | None = None, label: str = "") -> dict:
     with _lock:
-        anki.check()
+        collection = _check_collection()
+        reviewed = _take_preview(preview_id, collection, spec)
         if spec["deck"] and spec["deck"] not in anki.deck_names():
             raise ValueError(f"There's no deck named {spec['deck']!r}.")
         change, already = _cards_to_change(spec)
+        _require_snapshot(reviewed, {"cards": sorted(change), "already": already})
         if not change:
             return {"id": None, "changed": 0, "already": already, "action": spec["action"]}
         action_id = uuid.uuid4().hex[:12]
         entry = {"id": action_id, "created": int(time.time()), "action": spec["action"],
                  "target": spec["deck"], "label": str(label)[:200], "status": "pending",
-                 "cards": change}
+                 "cards": change, "collection": collection}
         _write_history(_read_history() + [entry])          # log before writing
         try:
+            _check_collection(collection)
             anki.invoke(spec["action"], cards=change)
-        except Exception:
-            _write_history([e for e in _read_history() if e.get("id") != action_id])
-            raise
-        _update_entry(action_id, status="done")
+            _verify_card_state(change, spec["action"], collection)
+            _update_entry(action_id, status="done")
+        except Exception as error:
+            _uncertain(action_id, error)
     return {"id": action_id, "changed": len(change), "already": already,
             "action": spec["action"], "deck": spec["deck"]}
 
@@ -436,13 +554,20 @@ def apply_card_action(spec: dict, *, label: str = "") -> dict:
 def _undo_card_action(entry: dict) -> dict:
     """Reverse a suspend/unsuspend for cards still in the state it left them."""
     cards = [int(c) for c in entry["cards"]]
-    suspended = set(anki.invoke("findCards", query="cid:" + ",".join(map(str, cards)) + " is:suspended")) if cards else set()
+    query = "cid:" + ",".join(map(str, cards))
+    existing = set(anki.invoke("findCards", query=query)) if cards else set()
+    suspended = set(anki.invoke("findCards", query=query + " is:suspended")) if cards else set()
     if entry["action"] == "suspend":
         revert, opposite = [c for c in cards if c in suspended], "unsuspend"
     else:
-        revert, opposite = [c for c in cards if c not in suspended], "suspend"
-    if revert:
-        anki.invoke(opposite, cards=revert)
-    _update_entry(entry["id"], status="undone", undone_at=int(time.time()))
+        revert, opposite = [c for c in cards if c in existing and c not in suspended], "suspend"
+    try:
+        if revert:
+            _check_collection(entry["collection"])
+            anki.invoke(opposite, cards=revert)
+            _verify_card_state(revert, opposite, entry["collection"])
+        _update_entry(entry["id"], status="undone", undone_at=int(time.time()))
+    except Exception as error:
+        _uncertain(entry["id"], error)
     return {"id": entry["id"], "restored": len(revert), "skipped": len(cards) - len(revert),
             "decks": [entry.get("target") or ""]}

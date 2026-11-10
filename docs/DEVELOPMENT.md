@@ -66,7 +66,9 @@ Never commit `.env`, API keys, collections, or personal logs. See [`.env.example
 - **Move to deck** moves every card of the current results into another deck through [AnkiConnect](https://ankiweb.net/shared/info/2055492159) (Anki must be running). The **Organize** tab (`/api/agent`, `agent_chat`) is the only chat that can prepare changes: `propose_move` and `propose_card_action` (suspend/unsuspend, e.g. "in my GI deck, suspend everything except GERD"). They find cards (browsing the tag tree) and match deck names, and return proposals; nothing changes until the user confirms the preview, which lists every affected card (compact rows that expand to the full card, 50 at a time, via `/api/notes`). Each move's original decks are logged to `move_history.json` in the app data folder (newest 50 kept) for undo. Set `ANKICONNECT_URL` for a non-default address.
 - Card images load from `collection.media` beside the collection. For another media location, set `MEDIA_DIR`. Clicking an image opens a larger view.
 
-The collection is read without modification, except for moves the user confirms, which go through AnkiConnect. AI features send questions and relevant card text to Groq. Citations help verify answers; they do not guarantee correctness.
+Organize verifies that Anki's open profile matches the collection selected in Setup. Move and suspend confirmations require a one-use server preview, valid for ten minutes; changed selections require a new preview. Undo records are tied to their original collection. Older records without a collection identity cannot be safely undone through the app. If Anki's response is lost or a change cannot be verified, its recovery record remains in **Recent changes**, marked **Outcome unconfirmed**, even beyond the normal history limit. Check Anki or use Undo before trying the action again.
+
+The collection is read without modification, except for moves and suspend/unsuspend actions the user confirms, which go through AnkiConnect. AI features send questions and relevant card text to Groq. Citations help verify answers; they do not guarantee correctness.
 
 ## Refresh the source app's index
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import urllib.error
 import urllib.request
 from typing import Any, Iterable
@@ -54,11 +55,28 @@ def invoke(action: str, *, timeout: float = TIMEOUT, **params: Any) -> Any:
     return payload["result"]
 
 
-def check(*, timeout: float = TIMEOUT) -> int:
+def check(*, timeout: float = TIMEOUT, collection_path: Path | None = None) -> int:
     """Return the AnkiConnect API version, or raise if it is unusable."""
     version = invoke("version", timeout=timeout)
     if not isinstance(version, int) or version < API_VERSION:
         raise AnkiConnectError("Your AnkiConnect add-on is too old. Update it in Anki → Tools → Add-ons.")
+    if collection_path is not None:
+        collection = Path(collection_path).expanduser().resolve()
+        if collection.name != "collection.anki2":
+            raise AnkiConnectError("Organize needs a live collection.anki2 selected in Setup.")
+        # AnkiConnect reports the open profile's actual media directory, so
+        # equally named profiles in different Anki data folders cannot match.
+        media = invoke("getMediaDirPath", timeout=timeout)
+        if not isinstance(media, str) or not media or not Path(media).is_absolute():
+            raise AnkiConnectError("Couldn't verify Anki's open profile. Update AnkiConnect and try again.")
+        # Resolve the profile folder, not the media folder itself: two profiles
+        # can deliberately symlink their media to the same shared directory.
+        reported = Path(media)
+        if reported.name != "collection.media" or reported.parent.resolve() != collection.parent:
+            raise AnkiConnectError(
+                "Anki has a different profile open. Open the profile selected in Anki Agent's Setup, "
+                "then preview the change again."
+            )
     return version
 
 

@@ -501,3 +501,113 @@ test("Interrupted search stream retains reasoning without a generating indicator
   assert.doesNotMatch(f.node("#search-thinking").innerHTML, /Generating…/);
   assert.match(f.node("#results").innerHTML, /stream ended/);
 });
+
+function organizeFixture() {
+  const f = fixture();
+  f.node("#move-dialog").querySelector = (s) => f.node(`#move-dialog ${s}`);
+  f.run("mountPreviewCards = () => {}; loadDecks = () => {}; ");
+  return f;
+}
+
+const movePreview = (token) => ({preview_id: token, cards_to_move: 2, notes: 1,
+  target: "GI", target_exists: true, from_decks: []});
+
+test("Move confirmation sends the reviewed token and requires a new preview after failure", async () => {
+  const f = organizeFixture();
+  f.run('openMoveDialog({nids:[1]})');
+  f.requests[0].respond({decks:["GI"]});
+  f.node("#move-target").value = "GI";
+  const preview = f.run("previewMove()");
+  f.requests[1].respond(movePreview("reviewed"));
+  await preview;
+  const confirm = f.run("confirmMove()");
+  assert.equal(f.requests[2].payload.preview_id, "reviewed");
+  await f.run("confirmMove()"); // Double click cannot create another request.
+  assert.equal(f.requests.length, 3);
+  f.requests[2].respond({error:"Cards changed; preview again", preview_required:true}, 409);
+  await confirm;
+  assert.equal(f.run("moveUi.previewId"), null);
+  assert.equal(f.node('#move-dialog [data-act="confirm"]').disabled, true);
+  const again = f.run("previewMove()");
+  f.requests[3].respond(movePreview("fresh"));
+  await again;
+  assert.equal(f.run("moveUi.previewId"), "fresh");
+  assert.equal(f.node('#move-dialog [data-act="confirm"]').disabled, false);
+});
+
+test("Out-of-order move previews cannot restore an older confirmation token", async () => {
+  const f = organizeFixture();
+  f.run('openMoveDialog({nids:[1]})');
+  f.requests[0].respond({decks:[]});
+  f.node("#move-target").value = "GI";
+  const old = f.run("previewMove()");
+  const fresh = f.run("previewMove()");
+  f.requests[2].respond(movePreview("fresh"));
+  await fresh;
+  f.requests[1].respond(movePreview("old"));
+  await old;
+  assert.equal(f.run("moveUi.previewId"), "fresh");
+  f.node("#move-target").listeners.input();
+  assert.equal(f.run("moveUi.previewId"), null);
+  assert.equal(f.node('#move-dialog [data-act="confirm"]').disabled, true);
+});
+
+test("A preview from a closed move dialog cannot authorize another selection", async () => {
+  const f = organizeFixture();
+  f.run('openMoveDialog({nids:[1]})');
+  f.requests[0].respond({decks:[]});
+  f.node("#move-target").value = "GI";
+  const old = f.run("previewMove()");
+  f.node("#move-dialog").close();
+  f.run('openMoveDialog({nids:[2]})');
+  f.requests[2].respond({decks:[]});
+  f.node("#move-target").value = "GI";
+  f.requests[1].respond(movePreview("old"));
+  await old;
+  assert.equal(f.run("moveUi.previewId"), null);
+});
+
+test("Card confirmation sends its preview token and cannot be retried blindly", async () => {
+  const f = organizeFixture();
+  const opening = f.run('openCardActionDialog({action:"suspend",deck:"GI"})');
+  f.requests[0].respond({preview_id:"card-token",cards_to_change:1,change_nids:[2]});
+  await opening;
+  const button = f.node('#move-dialog [data-act="confirm"]');
+  assert.equal(button.disabled, false);
+  const applying = button.listeners.click();
+  assert.equal(f.requests[1].payload.preview_id, "card-token");
+  await button.listeners.click();
+  assert.equal(f.requests.length, 2);
+  f.requests[1].respond({error:"Outcome uncertain; check Recent changes"}, 503);
+  await applying;
+  assert.equal(button.disabled, true);
+  assert.equal(f.node('#move-dialog [data-act="preview"]').disabled, false);
+  await button.listeners.click();
+  assert.equal(f.requests.length, 2);
+});
+
+test("A late card preview cannot overwrite a newly opened dialog", async () => {
+  const f = organizeFixture();
+  const old = f.run('openCardActionDialog({action:"suspend",deck:"Old"})');
+  f.node("#move-dialog").close();
+  const fresh = f.run('openCardActionDialog({action:"suspend",deck:"New"})');
+  f.requests[1].respond({preview_id:"new",cards_to_change:2,change_nids:[2]});
+  await fresh;
+  f.requests[0].respond({preview_id:"old",cards_to_change:99,change_nids:[1]});
+  await old;
+  assert.match(f.node("#move-preview").innerHTML, /<b>2<\/b>/);
+  const applying = f.node('#move-dialog [data-act="confirm"]').listeners.click();
+  assert.equal(f.requests[2].payload.preview_id, "new");
+  assert.equal(f.requests[2].payload.deck, "New");
+  f.requests[2].respond({changed:2,id:"saved"});
+  await applying;
+});
+
+test("Uncertain history is visibly distinguished from confirmed changes", async () => {
+  const f = organizeFixture();
+  const loading = f.run("loadMoveHistory()");
+  f.requests[0].respond({moves:[{id:"recover",status:"uncertain",cards:2,target:"GI",created:1}]});
+  await loading;
+  assert.match(f.node("#move-history-list").innerHTML, /Outcome unconfirmed/);
+  assert.match(f.node("#move-history-list").innerHTML, /data-id="recover"/);
+});

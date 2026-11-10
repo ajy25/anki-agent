@@ -39,7 +39,7 @@ from flask import Flask, Response, abort, jsonify, render_template, request, sen
 from .ingest import DECK_PATH, ensure_built
 from .media import IMAGE_TYPES, is_media_filename, resolve_media_dir, rewrite_image_sources
 from .parse import DISPLAY_ALLOWED_ATTRS, DISPLAY_ALLOWED_TAGS
-from . import search
+from . import ingest, search
 from .llm_client import available_models, get_model
 
 load_dotenv()
@@ -329,12 +329,15 @@ def api_tutor_settings():
 
 def _anki_error(e: Exception):
     from .anki_connect import AnkiConnectError
+    from .organize import StalePreview
+    if isinstance(e, StalePreview):
+        return jsonify({"error": str(e), "preview_required": True}), 409
     if isinstance(e, ValueError):
         return jsonify({"error": str(e)}), 400
     if isinstance(e, AnkiConnectError):
         return jsonify({"error": str(e), "anki_unavailable": True}), 503
     app.logger.warning("Anki change failed: %s", e)
-    return jsonify({"error": "Something went wrong talking to Anki. Nothing was changed."}), 500
+    return jsonify({"error": "Something went wrong talking to Anki. Check Recent changes before trying again."}), 500
 
 
 @app.route("/api/anki/status")
@@ -342,7 +345,7 @@ def api_anki_status():
     """Quick, read-only connection check for Organize's setup notice."""
     from . import anki_connect
     try:
-        version = anki_connect.check(timeout=3.0)
+        version = anki_connect.check(timeout=3.0, collection_path=ingest.DECK_PATH)
         response = jsonify({"connected": True, "version": version})
     except Exception as e:
         response = app.make_response(_anki_error(e))
@@ -355,7 +358,7 @@ def api_anki_decks():
     """Every deck in the live Anki collection (via AnkiConnect), for the picker."""
     from . import anki_connect
     try:
-        anki_connect.check()
+        anki_connect.check(collection_path=ingest.DECK_PATH)
         return jsonify({"decks": anki_connect.deck_names()})
     except Exception as e:
         return _anki_error(e)
@@ -383,7 +386,8 @@ def api_move():
     data = request.get_json(silent=True) or {}
     try:
         nids = organize.clean_nids(data.get("nids"))
-        return jsonify(organize.move_notes(nids, data.get("target"), label=str(data.get("label") or "")))
+        return jsonify(organize.move_notes(nids, data.get("target"), preview_id=data.get("preview_id"),
+                                          label=str(data.get("label") or "")))
     except Exception as e:
         return _anki_error(e)
 
@@ -430,7 +434,8 @@ def api_cards_apply():
     data = request.get_json(silent=True) or {}
     try:
         spec = organize.clean_card_spec(data)
-        return jsonify(organize.apply_card_action(spec, label=str(data.get("label") or "")))
+        return jsonify(organize.apply_card_action(spec, preview_id=data.get("preview_id"),
+                                                 label=str(data.get("label") or "")))
     except Exception as e:
         return _anki_error(e)
 
