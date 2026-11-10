@@ -8,10 +8,9 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../ankiagent/static/app.js"), "utf8")
   .replace(/boot\(\);\s*$/, "");
 
-function fixture({ render = false } = {}) {
+function fixture({ render = false, storage = new Map() } = {}) {
   const nodes = new Map();
   const requests = [];
-  const storage = new Map();
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
       value: "", style: { setProperty(key, value) { this[key] = value; } }, dataset: {}, scrollHeight: 24, innerHTML: "old source", hidden: false,
@@ -26,7 +25,8 @@ function fixture({ render = false } = {}) {
   }
   const context = vm.createContext({
     document: { querySelector: node }, window: {}, console, AbortController,
-    localStorage: {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)},
+    localStorage: {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value),
+      removeItem: (key) => storage.delete(key)},
     TextDecoder, setTimeout, clearTimeout,
     performance, URLSearchParams,
     fetch: (url, options = {}) => new Promise((resolve, reject) => requests.push({
@@ -74,6 +74,66 @@ test("Tutor text size updates immediately, persists across renders, and rejects 
   f.node("#tutor-shell").style["--tutor-text-scale"] = "1";
   f.run("applyTutorTextScale(1.5)");
   assert.equal(f.node("#tutor-shell").style["--tutor-text-scale"], "1");
+});
+
+test("Clear chat button clears only the current tab and cancels late replies", async () => {
+  for (const mode of ["tutor", "agent"]) {
+    const f = fixture({render: true});
+    f.run(`state.mode = "${mode}"; state.chatStore = {tutor: [{role:"user", content:"Tutor"}], agent: [{role:"user", content:"Organize"}]}; state.tutorMessages = state.chatStore[state.mode]; renderTutor();`);
+    assert.match(f.node("#results").innerHTML, /id="tutor-clear-chat">Clear chat/);
+    const pending = f.send("New question");
+    const request = f.requests.find(r => r.url === (mode === "tutor" ? "/api/tutor" : "/api/agent"));
+    f.node("#tutor-clear-chat").listeners.click();
+    assert(request.signal.aborted);
+    request.respond({answer: "Stale reply", sources: []});
+    await pending;
+    assert.deepEqual(f.state().tutorMessages, []);
+    assert.equal(f.state().chatStore[mode === "tutor" ? "agent" : "tutor"].length, 1);
+    assert.equal(f.node("#tutor-input").value, "");
+  }
+});
+
+test("Automatic clearing defaults on and clears both tabs when hiding", () => {
+  const f = fixture();
+  assert.equal(f.run("readClearChatOnClose()"), true);
+  f.run('state.chatStore = {tutor: [{role:"user", content:"Tutor"}], agent: [{role:"user", content:"Organize"}]}; state.tutorMessages = state.chatStore.tutor; handleChatWindowClose();');
+  assert.deepEqual(f.state().chatStore, {tutor: [], agent: []});
+});
+
+test("Settings toggle keeps chats across reopening without reviving Organize actions", () => {
+  const storage = new Map();
+  const f = fixture({render: true, storage});
+  f.run('bindTutorSettings(); state.chatStore = {tutor: [{role:"user", content:"Tutor"}], agent: [{role:"assistant", content:"Organize", proposals:[{id:"old-action"}]}]}; state.tutorMessages = state.chatStore.tutor;');
+  f.node("#clear-chat-on-close").listeners.change({target:{checked:false}});
+  f.run("handleChatWindowClose()");
+  assert.equal(f.state().tutorMessages.length, 1);
+  const reopened = fixture({render:true, storage});
+  reopened.run('restoreChatHistory(); state.tutorMessages = state.chatStore.tutor; renderTutorMessages();');
+  assert.equal(reopened.run("readClearChatOnClose()"), false);
+  assert.equal(reopened.state().tutorMessages[0].content, "Tutor");
+  assert.equal(reopened.state().chatStore.agent[0].content, "Organize");
+  assert.equal(reopened.state().chatStore.agent[0].proposals, undefined);
+  reopened.run("resetTutor()");
+  const afterClear = fixture({storage});
+  afterClear.run("restoreChatHistory()");
+  assert.deepEqual(afterClear.state().chatStore.tutor, []);
+  assert.equal(afterClear.state().chatStore.agent.length, 1);
+  reopened.run("setClearChatOnClose(true)");
+  assert.equal(storage.has("ankiagent.chatHistory"), false);
+  assert.equal(reopened.state().chatStore.agent.length, 1); // preference doesn't clear the visible session
+  reopened.run("handleChatWindowClose()");
+  assert.deepEqual(reopened.state().chatStore, {tutor: [], agent: []});
+});
+
+test("Default startup discards old saved history and corrupt history is ignored", () => {
+  const storage = new Map([["ankiagent.chatHistory", '{"tutor":[{"role":"user","content":"Old"}]}']]);
+  const f = fixture({storage});
+  f.run("restoreChatHistory()");
+  assert.equal(storage.has("ankiagent.chatHistory"), false);
+  storage.set("ankiagent.clearChatOnClose", "false");
+  storage.set("ankiagent.chatHistory", "broken JSON");
+  f.run("restoreChatHistory()");
+  assert.deepEqual(f.state().chatStore, {tutor: [], agent: []});
 });
 
 test("Tutor settings load, restore defaults in the editor, and save edited instructions", async () => {

@@ -28,7 +28,6 @@ pyobjc-framework-ApplicationServices==13.0
 pyobjc-framework-Cocoa==13.0
 pyobjc-framework-CoreText==13.0
 pyobjc-framework-Quartz==13.0
-pyobjc-framework-Security==13.0
 pyobjc-framework-UniformTypeIdentifiers==13.0
 pyobjc-framework-WebKit==13.0
 python-dotenv==1.2.4

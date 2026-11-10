@@ -48,7 +48,7 @@ The current automated workflow produces an Apple silicon preview with an ad-hoc 
 - Pull requests run through `pull_request`, with no inherited application or signing secrets. There is no privileged `pull_request_target` workflow.
 - Actions are pinned to exact commit revisions. Dependabot proposes monthly updates for Actions and the pinned Mac dependencies; those proposals run through the same CI checks.
 - To require green checks before merging, configure a GitHub rule for `main` requiring **Tests (macOS)**, **Mac installer**, and **Website checks**. Workflow files do not enable branch protection themselves; choose the repository's merge policy in **Settings → Rules → Rulesets** after the checks have appeared.
-- CI smoke tests do not exercise real inference, a real user's Keychain, or every first-open security prompt. Test those user-facing steps before publishing a release.
+- CI smoke tests exercise saving and reading a synthetic key from the app-managed `.env`; they do not exercise real inference or every first-open security prompt. Test those user-facing steps before publishing a release.
 
 ## Run the checks locally
 

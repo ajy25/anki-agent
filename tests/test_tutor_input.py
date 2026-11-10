@@ -114,6 +114,73 @@ class TutorInputTests(unittest.TestCase):
         self.assertEqual(result.status_code, 400)
         self.assertFalse(self.calls)
 
+    def test_greeting_recovers_from_named_tool_rejection_for_both_models(self):
+        for model in ("openai/gpt-oss-120b", "qwen/qwen3.8-27b"):
+            with self.subTest(model=model):
+                response = SimpleNamespace(choices=[SimpleNamespace(
+                    message=SimpleNamespace(content="How can I help with your cards?", tool_calls=[]),
+                    finish_reason="stop",
+                )])
+                create = Mock(side_effect=[
+                    RuntimeError("Tool choice is required, but model did not call a tool"), response,
+                ])
+                fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                with patch.object(llm, "get_client", return_value=fake):
+                    answer, sources, debug = llm.tutor_chat(
+                        [{"role": "user", "content": "hi"}], model=model,
+                    )
+                self.assertEqual(answer, "How can I help with your cards?")
+                self.assertEqual(sources, [])
+                self.assertEqual(create.call_count, 2)
+                first, second = [c.kwargs for c in create.call_args_list]
+                self.assertEqual(first["tool_choice"]["function"]["name"], "search_deck")
+                self.assertEqual(second["tool_choice"], "auto")
+                self.assertEqual(second["tools"], llm.TUTOR_TOOLS)
+                self.assertEqual(second["messages"], first["messages"])
+                self.assertTrue(debug["tool_choice_fallback"])
+                self.assertEqual(debug["response_retries"], 0)
+                self.assertNotIn("error", debug)
+
+    def test_tool_choice_recovery_can_still_search_and_cite_cards(self):
+        original = llm.get_client().chat.completions.create
+        create = Mock(side_effect=[
+            RuntimeError("Tool choice is required, but model did not call a tool"),
+        ])
+        def recovering_create(**kwargs):
+            if create.call_count == 0:
+                return create(**kwargs)
+            return original(**kwargs)
+        fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=recovering_create)))
+        with patch.object(llm, "get_client", return_value=fake):
+            answer, sources, debug = llm.tutor_chat([{"role": "user", "content": CARD}])
+        self.assertEqual(answer, "Card explanation [1].")
+        self.assertTrue(sources[0]["cited"])
+        self.assertEqual(self.calls[0]["tool_choice"], "auto")
+        self.assertTrue(debug["tool_choice_fallback"])
+        self.assertNotIn("error", debug)
+
+    def test_tool_choice_recovery_is_specific_and_bounded(self):
+        missing_tool = "Tool choice is required, but model did not call a tool"
+        for forced, errors, expected_calls in (
+            (True, [RuntimeError("Invalid API key")], 1),
+            (False, [RuntimeError(missing_tool)], 1),
+            (True, [RuntimeError(missing_tool), RuntimeError(missing_tool)], 2),
+            (True, [llm.TutorCancelled()], 1),
+        ):
+            with self.subTest(forced=forced, errors=errors):
+                create = Mock(side_effect=errors)
+                fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                with patch.object(llm, "get_client", return_value=fake):
+                    session = llm.AgentSession("hi", tools=llm.TUTOR_TOOLS, require_deck_search=forced)
+                    if isinstance(errors[0], llm.TutorCancelled):
+                        with self.assertRaises(llm.TutorCancelled):
+                            session.run()
+                    else:
+                        answer, _, debug = session.run()
+                        self.assertEqual(answer, "")
+                        self.assertIn(str(errors[-1]), debug["error"])
+                self.assertEqual(create.call_count, expected_calls)
+
     def test_empty_current_turn_does_not_replay_a_previous_question(self):
         result = self.client.post("/api/tutor", json={"messages": [
             {"role": "user", "content": CARD},

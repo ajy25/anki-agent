@@ -61,7 +61,7 @@ An API key is a private access code that lets Anki Agent use Groq's AI service. 
 4. Return to Anki Agent. Click the field under **Connect Groq** and paste with **Command-V**. The key starts with `gsk_`. Paste the key itself, without quotation marks.
 5. Click **Test key**. You should see **“Connected. Your key was accepted by Groq.”**
 
-The field hides the key as you type. **Show** lets you check what you pasted. It is saved in **macOS Keychain** when you click **Save & open deck** in step 5. Testing alone does not save it.
+The field hides the key as you type. **Show** lets you check what you pasted. It is saved in an app-managed **.env** file when you click **Save & open deck** in step 5. The file is plain text, with access restricted to your Mac account; you do not need to create or edit it yourself. Testing alone does not save it.
 
 Keep your key private. Do not put it in a GitHub issue, screenshot, or message asking for help. Groq usage follows your own account's limits and billing settings; check those in the [Groq console](https://console.groq.com/) rather than assuming unlimited free use. See [Groq's key setup documentation](https://console.groq.com/docs/quickstart) for account help.
 
@@ -69,7 +69,7 @@ Keep your key private. Do not put it in a GitHub issue, screenshot, or message a
 
 **Choose your Anki profile:** select the profile containing your cards. A profile is Anki's separate card collection for a person or purpose; a common default name is **User 1**. If you have only one profile, it may already be selected.
 
-**Pick the deck you want to study:** choose your deck from the list. For example, choose **AnKing Step Deck** to include its subdecks, or choose one subdeck to focus on that subject. Choose **All decks in this profile** to search across the whole profile.
+**Pick the deck you want to study:** choose your deck from the list. For example, choose **Study Deck** to include its subdecks, or choose one subdeck to focus on that subject. Choose **All decks in this profile** to search across the whole profile.
 
 You do not need to export your cards, type a deck name, or move Anki's files.
 
@@ -112,7 +112,7 @@ Setup is complete when you can ask a question and inspect its source cards. AI a
 3. Open it and drag **Anki Agent.app** into **Applications**. Choose **Replace** if asked.
 4. Open **Anki Agent** from Applications. You may see the first-open security prompt again.
 
-Your settings are stored separately from the app, so replacing the app preserves them. If macOS asks for Keychain access after an update, check that it names the Anki Agent copy you installed. If your saved key cannot be read, reopen Setup and paste your own key again.
+Your settings and `.env` file are stored separately from the app, so replacing the app preserves them. The app no longer reads or writes Keychain. If you are upgrading from a Keychain-based version and Setup asks for a key, paste your Groq key once and click **Save & open deck**. Later launches and updates use the saved local file without Keychain prompts.
 
 Version **1.3.1** fixes a crash that could happen after saving Setup with the optional shortcut enabled. If you have that problem on an older copy, update before trying again.
 
@@ -138,6 +138,6 @@ If the maintainer asks for logs: in Finder, choose **Go → Go to Folder…**, p
 ## Where your data goes
 
 - **Anki cards:** read from the collection on your Mac. Anki Agent does not edit or sync the collection.
-- **Groq key:** saved in macOS Keychain, separate from the app download.
+- **Groq key:** saved as plain text in `~/Library/Application Support/Anki Agent/.env`, readable and writable only by your Mac account. It is separate from the app download and survives app updates. Do not share this file.
 - **Settings, search index, and logs:** stored in `~/Library/Application Support/Anki Agent/`.
 - **AI requests:** your questions and relevant card text are sent to Groq to produce answers and AI searches. Anki Agent is not an entirely offline AI app.

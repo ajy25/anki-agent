@@ -57,7 +57,10 @@ class DesktopManager:
         self.state_lock = threading.Lock()
         self.status = "setup"
         self.message = ""
-        self.key_available = bool(os.environ.get("GROQ_API_KEY"))
+        try:
+            self.key_available = bool(self.store.get_key())
+        except RuntimeError:
+            self.key_available = False
         self.backend = None
         self.backend_factory = backend_factory or self._load_backend
         self.on_ready = None
@@ -91,7 +94,7 @@ class DesktopManager:
                 name = self.config.get("deck_name") or ""
                 if name and name not in decks:
                     raise ValueError("That deck is no longer in this profile. Choose a deck again.")
-                key = self.store.vault.get() if self.store.path.exists() else os.environ.get("GROQ_API_KEY", "")
+                key = self.store.get_key()
                 self.key_available = bool(key)
                 if not key:
                     raise ValueError("Add your Groq API key to finish setup.")
@@ -162,7 +165,7 @@ def create_desktop_app(manager: DesktopManager, key_validator=validate_key):
         key = str((request.get_json(silent=True) or {}).get("key", "")).strip()
         try:
             if not key:
-                key = manager.store.vault.get() if manager.store.path.exists() else os.environ.get("GROQ_API_KEY", "")
+                key = manager.store.get_key()
             key_validator(key)
             return jsonify(ok=True)
         except (ValueError, RuntimeError) as error:
@@ -179,7 +182,7 @@ def create_desktop_app(manager: DesktopManager, key_validator=validate_key):
             if name and name not in names:
                 raise ValueError("Choose a deck from the list.")
             key = str(data.get("key", "")).strip()
-            existing = manager.store.vault.get() if manager.store.path.exists() else os.environ.get("GROQ_API_KEY", "")
+            existing = manager.store.get_key() if not key else ""
             if key:
                 key_validator(key)
             elif not existing:

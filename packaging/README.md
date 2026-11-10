@@ -47,7 +47,7 @@ The output is a standalone `Anki Agent.app` inside a drag-to-Applications DMG, a
 
 Build the Apple silicon app on an arm64 Mac; do not rename it as universal. Both CI and the manual **Build Mac downloads** workflow run the same tests and upload verified preview artifacts. Tagged releases use those checks to prepare a draft with the assets attached. Workflow artifacts are build outputs, not a user-facing GitHub Release.
 
-The package smoke test runs the built executable with an empty data directory, checks setup routes and packaged assets, indexes a synthetic collection, changes the selected deck, and verifies the original collection is unchanged. It makes no model requests and uses an in-memory test credential rather than Keychain. Test actual first-open behavior and Keychain prompts separately on the intended Mac configurations.
+The package smoke test runs the built executable with an empty data directory, checks setup routes and packaged assets, indexes a synthetic collection, changes the selected deck, and verifies the original collection is unchanged. It makes no model requests and saves a synthetic key in a temporary `.env` using the same credential store as the desktop app, including checking owner-only permissions. Test actual first-open behavior separately on the intended Mac configurations.
 
 ## Optional: Developer ID signing and Apple notarization
 

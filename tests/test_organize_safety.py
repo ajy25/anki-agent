@@ -167,7 +167,7 @@ class OrganizeSafetyTests(unittest.TestCase):
                 with patch.object(anki, "invoke", side_effect=fake.invoke):
                     preview = organize.preview_move([1], "GI")
                     if mutation == "new_card":
-                        fake.cards[13] = (1, "AnKing Step Deck::B&B")
+                        fake.cards[13] = (1, "Study Deck::B&B")
                     else:
                         fake.cards[11] = (1, "Elsewhere")
                     with self.assertRaises(organize.StalePreview):
@@ -255,7 +255,7 @@ class OrganizeSafetyTests(unittest.TestCase):
         self.assertEqual(entry["status"], "pending")
         self.assertEqual(fake.deck_of(11), "GI")
         organize.undo_move(entry["id"])
-        self.assertEqual(fake.deck_of(11), "AnKing Step Deck::B&B")
+        self.assertEqual(fake.deck_of(11), "Study Deck::B&B")
 
     def test_unsuspend_null_response_is_verified_against_actual_state(self):
         fake = self.connect(suspend_tests.FakeAnki())
@@ -294,8 +294,8 @@ class OrganizeSafetyTests(unittest.TestCase):
                 organize.undo_move(moved["id"])
         self.assertEqual(organize._read_history()[-1]["status"], "uncertain")
         organize.undo_move(moved["id"])
-        self.assertEqual(fake.deck_of(11), "AnKing Step Deck::B&B")
-        self.assertEqual(fake.deck_of(21), "AnKing Step Deck::Pathoma")
+        self.assertEqual(fake.deck_of(11), "Study Deck::B&B")
+        self.assertEqual(fake.deck_of(21), "Study Deck::Pathoma")
 
     def test_uncertain_history_is_not_pruned_or_hidden_by_new_changes(self):
         pending = {"id": "recover", "collection": str(self.collection), "status": "uncertain", "cards": []}

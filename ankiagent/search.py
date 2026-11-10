@@ -598,7 +598,7 @@ def find_tags(substring: str, limit: int = 25) -> list[dict]:
 
 def tags_with_segment(segment: str) -> list[str]:
     """Every tag that has `segment` as one whole `::` level (case-insensitive),
-    e.g. "#B&B" -> "#AK_Step1_v12::#B&B::10_GI::01_Anatomy", ..."""
+    e.g. "#B&B" -> "#Study_Step1::#B&B::10_GI::01_Anatomy", ..."""
     s = (segment or "").strip()
     if not s:
         return []
@@ -654,7 +654,7 @@ def tag_children(prefix: str = "", limit: int = 80) -> list[dict]:
     """Browse the tag tree one level at a time.
 
     Returns the immediate child levels under `prefix` (a tag path such as
-    "#AK_Step1_v12" or "#AK_Step1_v12::#B&B"; "" = top level) as
+    "#Study_Step1" or "#Study_Step1::#B&B"; "" = top level) as
     [{tag, notes}], where `notes` is the number of distinct notes tagged
     anywhere beneath that child. Lets the AI find resources whose tag names
     it can't guess (e.g. "Boards and Beyond" is tagged "#B&B").

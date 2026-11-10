@@ -10,7 +10,6 @@ import tempfile
 import threading
 import subprocess
 import sys
-from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
@@ -18,7 +17,7 @@ from flask import Flask
 from werkzeug.test import Client
 from werkzeug.wrappers import Response
 from ankiagent.desktop import DesktopManager, collection_decks, create_desktop_app, validate_key
-from ankiagent.settings import MacKeychain, SettingsStore, discover_profiles
+from ankiagent.settings import EnvCredentials, SettingsStore, discover_profiles
 
 
 class Vault:
@@ -136,28 +135,81 @@ class OnboardingTests(unittest.TestCase):
         self.assertTrue(result["indexing"])
         self.assertTrue(result["source_read_only"])
 
-    def test_native_keychain_adapter_reads_missing_and_saved_credentials(self):
-        security = SimpleNamespace(**{name: name for name in (
-            "kSecClass", "kSecClassGenericPassword", "kSecAttrService", "kSecAttrAccount",
-            "kSecReturnData", "kSecMatchLimit", "kSecMatchLimitOne")},
-            errSecSuccess=0, errSecItemNotFound=-25300,
-            SecItemCopyMatching=Mock(side_effect=[(-25300, None),(0,b"gsk_fixture")]))
-        with patch.dict(sys.modules, {"Security": security}):
-            vault = MacKeychain()
-            self.assertEqual(vault.get(), "")
-            self.assertEqual(vault.get(), "gsk_fixture")
+    def test_default_store_saves_private_env_and_reopens_without_keychain(self):
+        store = SettingsStore(self.root / "local-settings")
+        with patch.dict(sys.modules, {"Security": None}):
+            self.assertIsInstance(store.vault, EnvCredentials)
+            self.assertEqual(store.get_key(), "")
+            store.save({"deck_path": str(self.collection), "deck_name": "Study"}, "gsk_fixture")
+            reopened = SettingsStore(store.root)
+            self.assertEqual(reopened.get_key(), "gsk_fixture")
+            manager = DesktopManager(reopened, self.factory)
+            manager._prepare()
+            self.assertEqual(manager.status, "ready")
+        self.assertEqual(stat.S_IMODE(store.vault.path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(store.root.stat().st_mode), 0o700)
+        self.assertNotIn("gsk_fixture", store.path.read_text())
 
-    def test_native_keychain_adapter_creates_a_device_local_credential(self):
-        security = SimpleNamespace(**{name: name for name in (
-            "kSecClass", "kSecClassGenericPassword", "kSecAttrService", "kSecAttrAccount",
-            "kSecValueData", "kSecAttrAccessible", "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly")},
-            errSecSuccess=0, errSecItemNotFound=-25300,
-            SecItemUpdate=Mock(return_value=-25300), SecItemAdd=Mock(return_value=(0,None)))
-        with patch.dict(sys.modules, {"Security": security}):
-            MacKeychain().set("gsk_fixture")
-        item = security.SecItemAdd.call_args.args[0]
-        self.assertEqual(item["kSecValueData"], b"gsk_fixture")
-        self.assertEqual(item["kSecAttrAccessible"], "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly")
+    def test_env_update_preserves_other_entries_and_treats_key_literally(self):
+        vault = EnvCredentials(self.root)
+        vault.path.write_text('# Keep this comment\nOTHER_SETTING="value"\nGROQ_API_KEY=old\n')
+        vault.path.chmod(0o644)
+        vault.set("gsk_${OTHER_SETTING}")
+        self.assertEqual(vault.get(), "gsk_${OTHER_SETTING}")
+        self.assertIn('# Keep this comment\nOTHER_SETTING="value"', vault.path.read_text())
+        self.assertEqual(stat.S_IMODE(vault.path.stat().st_mode), 0o600)
+
+    def test_failed_env_write_keeps_old_key_and_removes_temporary_file(self):
+        vault = EnvCredentials(self.root)
+        vault.set("gsk_old")
+        with patch("ankiagent.settings.os.replace", side_effect=OSError("gsk_never_echo")):
+            with self.assertRaisesRegex(RuntimeError, "Could not save") as error:
+                vault.set("gsk_new")
+        self.assertNotIn("gsk_never_echo", str(error.exception))
+        self.assertEqual(vault.get(), "gsk_old")
+        self.assertEqual(list(self.root.glob("credentials-*")), [])
+
+    def test_env_credentials_reject_multiline_keys_without_overwriting(self):
+        vault = EnvCredentials(self.root)
+        vault.set("gsk_original")
+        for key in ("", "gsk_a\nOTHER=x", "gsk_a b", "gsk_a\x00b"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                vault.set(key)
+        self.assertEqual(vault.get(), "gsk_original")
+
+    def test_local_env_works_before_settings_and_missing_saved_key_ignores_stale_environment(self):
+        store = SettingsStore(self.root / "local-settings")
+        with patch.dict(os.environ, {"GROQ_API_KEY": "gsk_environment"}):
+            self.assertEqual(store.get_key(), "gsk_environment")
+            store.vault.set("gsk_file")
+            self.assertEqual(store.get_key(), "gsk_file")
+            store.save({})
+            store.vault.path.unlink()
+            self.assertEqual(store.get_key(), "")
+
+    def test_setup_can_replace_an_unreadable_old_key(self):
+        with patch.object(self.vault, "get", side_effect=RuntimeError("Unreadable key")), patch.object(self.manager, "prepare"):
+            result = self.post("save", {"path": str(self.collection), "deck": "Study", "key": "gsk_replacement"})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(self.vault.key, "gsk_replacement")
+
+    def test_setup_uses_real_env_file_without_returning_or_serving_it(self):
+        store = SettingsStore(self.root / "local-settings")
+        manager = DesktopManager(store, self.factory)
+        application, _ = create_desktop_app(manager, key_validator=lambda key: None)
+        client = Client(application, Response)
+        headers = {"X-AnkiAgent-Setup-Token": manager.token}
+        with patch.object(manager, "prepare"):
+            result = client.post("/api/setup/save", json={"path": str(self.collection), "deck": "Study", "key": "gsk_private_fixture"},
+                                 headers=headers, base_url="http://127.0.0.1")
+            self.assertEqual(result.status_code, 200)
+            result = client.post("/api/setup/save", json={"path": str(self.collection), "deck": "Study::GI", "key": ""},
+                                 headers=headers, base_url="http://127.0.0.1")
+            self.assertEqual(result.status_code, 200)
+        self.assertEqual(store.get_key(), "gsk_private_fixture")
+        for url in ("/api/setup/state", "/setup", "/.env", "/setup-assets/.env"):
+            response = client.get(url, headers=headers, base_url="http://127.0.0.1")
+            self.assertNotIn(b"gsk_private_fixture", response.data)
 
     def test_saving_with_shortcut_enabled_keeps_native_work_off_setup_worker(self):
         launcher = importlib.import_module("launcher")

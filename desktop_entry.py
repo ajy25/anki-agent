@@ -12,18 +12,18 @@ def smoke_test(report: Path):
     from ankiagent.desktop import DesktopManager, create_desktop_app
     from ankiagent.settings import SettingsStore
     import ankiagent
-    import Security
     import importlib.util
     assert importlib.util.find_spec("webview.platforms.cocoa") is not None
     root = Path(ankiagent.__file__).parent
     for relative in ("templates/setup.html", "templates/index.html", "static/setup.js", "static/app.js", "static/app.css"):
         assert (root / relative).is_file(), relative
     with tempfile.TemporaryDirectory() as temporary:
-        class TestVault:
-            def get(self): return "gsk_local_smoke_test_only"
-            def set(self, key): pass
         temporary = Path(temporary)
-        manager = DesktopManager(store=SettingsStore(temporary / "preferences", vault=TestVault()))
+        store = SettingsStore(temporary / "preferences")
+        store.vault.set("gsk_local_smoke_test_only")
+        assert store.get_key() == "gsk_local_smoke_test_only"
+        assert store.vault.path.stat().st_mode & 0o777 == 0o600
+        manager = DesktopManager(store=store)
         application, _ = create_desktop_app(manager)
         client = Client(application, Response)
         page = client.get("/setup", base_url="http://127.0.0.1")
@@ -31,7 +31,7 @@ def smoke_test(report: Path):
         assert b"Set up Anki Agent" in page.data
         assert client.get("/api/setup/state", base_url="http://127.0.0.1").status_code == 403
         # Exercise the packaged indexer, SQLite extension, templates, and deck
-        # changes using only synthetic local data and an in-memory credential.
+        # changes using only synthetic local data and a disposable .env key.
         import sqlite3
         collection = temporary / "collection.anki2"
         with sqlite3.connect(collection) as connection:

@@ -18,7 +18,7 @@ with patch.object(ingest, "ensure_built", return_value=None):
     app_module = importlib.import_module("ankiagent.app")
 from ankiagent import llm
 
-GI = "AnKing Step Deck::GI subdeck"
+GI = "Study Deck::GI subdeck"
 
 
 class FakeAnki:
@@ -28,7 +28,7 @@ class FakeAnki:
             101: [1, GI, False], 102: [1, GI, False],    # note 1: GERD (2 cloze cards)
             201: [2, GI, False],                          # note 2: achalasia
             301: [3, GI, True],                           # note 3: already suspended
-            401: [4, "AnKing Step Deck", False],          # note 4: GERD, other deck
+            401: [4, "Study Deck", False],          # note 4: GERD, other deck
         }
         self.calls = []
         self.media_path = str(ingest.DECK_PATH.parent / "collection.media")
@@ -162,14 +162,14 @@ class AgentSuspendToolTests(Base):
         self.assertNotIn("suspend", self.fake.calls)
 
     def test_shortened_deck_name_resolves_from_the_message(self):
-        decks = [GI, "AnKing Step Deck", "AnKing Step Deck::GI cards", "Default"]
+        decks = [GI, "Study Deck", "Study Deck::GI cards", "Default"]
         msg = "within the GI subdeck I want you to suspend all the cards except for those about GERD"
         self.assertEqual(organize.resolve_target("GI", decks, msg)["target"], GI)
         # Without the message, "GI" is ambiguous; both GI decks are suggested.
         r = organize.resolve_target("GI", decks)
         self.assertFalse(r["exists"])
         self.assertIn(GI, r["suggestions"])
-        self.assertIn("AnKing Step Deck::GI cards", r["suggestions"])
+        self.assertIn("Study Deck::GI cards", r["suggestions"])
 
     def test_keep_set_adds_keyword_matches_to_the_ai_search(self):
         self.found["GERD"] = []                         # AI tag search came back empty
@@ -190,9 +190,9 @@ class AgentSuspendToolTests(Base):
 
     def test_empty_deck_is_reported_as_empty_not_already_suspended(self):
         for c in self.fake.cards.values():
-            c[1] = "AnKing Step Deck"                     # GI subdeck emptied (e.g. move undone)
+            c[1] = "Study Deck"                     # GI subdeck emptied (e.g. move undone)
         with patch.object(llm.search, "fast_search", return_value=[]), \
-             patch.object(organize.anki, "deck_names", return_value=[GI, "AnKing Step Deck"]):
+             patch.object(organize.anki, "deck_names", return_value=[GI, "Study Deck"]):
             out = self.session()._dispatch("propose_card_action",
                 {"action": "suspend", "deck": "GI subdeck", "except_selection": "GERD"})
         self.assertEqual(out["cards_to_change"], 0)

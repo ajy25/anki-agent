@@ -1,4 +1,4 @@
-"""Per-user desktop preferences and native macOS credential storage."""
+"""Per-user desktop preferences and a private, app-managed .env file."""
 from __future__ import annotations
 
 import json
@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from dotenv import dotenv_values, set_key
 
 
 def data_dir() -> Path:
@@ -17,42 +18,54 @@ def data_dir() -> Path:
     return Path.home() / ".local" / "share" / "anki-agent"
 
 
-class MacKeychain:
-    service = "org.ankiagent.desktop"
-    account = "groq-api-key"
+class EnvCredentials:
+    """Keep credentials outside the signed bundle so updates preserve them.
 
-    def _query(self):
-        import Security
-        return {Security.kSecClass: Security.kSecClassGenericPassword,
-                Security.kSecAttrService: self.service, Security.kSecAttrAccount: self.account}
+    This is plaintext storage, restricted to the current user (0600). Never
+    copy this file into builds or return its contents through the setup API.
+    """
+    def __init__(self, root: Path):
+        self.path = root / ".env"
 
     def get(self) -> str:
-        import Security
-        query = {**self._query(), Security.kSecReturnData: True,
-                 Security.kSecMatchLimit: Security.kSecMatchLimitOne}
-        status, value = Security.SecItemCopyMatching(query, None)
-        if status == Security.errSecItemNotFound:
-            return ""
-        if status != Security.errSecSuccess:
-            raise RuntimeError(f"macOS Keychain could not read the API key (code {status}).")
-        return bytes(value).decode("utf-8")
+        try:
+            if not self.path.exists():
+                return ""
+            # Treat the saved key literally, without expanding environment vars.
+            return dotenv_values(self.path, interpolate=False).get("GROQ_API_KEY") or ""
+        except (OSError, UnicodeError):
+            raise RuntimeError("Could not read the saved API key. Open Setup and save your key again.") from None
 
     def set(self, key: str) -> None:
-        import Security
-        values = {Security.kSecValueData: key.encode("utf-8")}
-        status = Security.SecItemUpdate(self._query(), values)
-        if status == Security.errSecItemNotFound:
-            status, _ = Security.SecItemAdd({**self._query(), **values,
-                Security.kSecAttrAccessible: Security.kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly}, None)
-        if status != Security.errSecSuccess:
-            raise RuntimeError(f"macOS Keychain could not save the API key (code {status}).")
+        if not key or any(char.isspace() or char == "\x00" for char in key):
+            raise ValueError("Enter an API key without spaces or line breaks.")
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, temporary = tempfile.mkstemp(prefix="credentials-", suffix=".tmp", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                if self.path.exists():
+                    stream.write(self.path.read_text())
+            # Preserve unrelated entries/comments if the user edited this file.
+            set_key(temporary, "GROQ_API_KEY", key, quote_mode="always")
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, self.path)
+        except (OSError, UnicodeError):
+            raise RuntimeError("Could not save the API key. Check access to Anki Agent's settings folder and try again.") from None
+        finally:
+            Path(temporary).unlink(missing_ok=True)
 
 
 class SettingsStore:
     def __init__(self, root: Path | None = None, vault=None):
         self.root = root or data_dir()
         self.path = self.root / "settings.json"
-        self.vault = vault or MacKeychain()
+        self.vault = vault if vault is not None else EnvCredentials(self.root)
+
+    def get_key(self) -> str:
+        saved = self.vault.get()
+        # Source launches can supply an initial key via the environment. Once
+        # Setup has been saved, a missing file must not revive a stale env key.
+        return saved or (os.environ.get("GROQ_API_KEY", "") if not self.path.exists() else "")
 
     def read(self) -> dict:
         if not self.path.exists():

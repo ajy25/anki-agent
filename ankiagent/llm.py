@@ -901,13 +901,17 @@ class AgentSession:
                 except TutorCancelled:
                     raise
                 except Exception as e:
-                    # "required" lets the model pick any tool, but for a message
-                    # no tool fits (a greeting, an unsupported request) it may
-                    # answer in text, which the provider rejects. Retry that
-                    # round once with tools optional instead of failing.
-                    if choice != "required" or "did not call a tool" not in str(e):
+                    # Both "required" (Organize) and a named function (Tutor)
+                    # can reject a text reply when no tool fits, e.g. a greeting.
+                    # Relax only that validation failure, once. Keep tools and
+                    # the grounding prompt available for study questions.
+                    forced_tool = choice == "required" or isinstance(choice, dict)
+                    if not forced_tool or "did not call a tool" not in str(e):
                         raise
                     debug["tool_choice_fallback"] = True
+                    if on_event:
+                        # The provider may reject after streaming partial text.
+                        on_event({"event": "answer_reset", "iteration": i + 1})
                     resp = complete(i, "auto")
             except (TutorCancelled, RateLimitExhausted):
                 raise
@@ -1066,7 +1070,7 @@ PROPOSE_MOVE_TOOL = {
                         "Destination deck copied EXACTLY as the student wrote "
                         "it, every word included (deck names can contain words "
                         "like 'cards'), with '::' between levels if they gave a "
-                        "path. E.g. 'GI', 'AnKing Step Deck::GI cards'. The app "
+                        "path. E.g. 'GI', 'Study Deck::GI cards'. The app "
                         "matches it to their existing decks."
                     ),
                 },
@@ -1563,8 +1567,8 @@ ASSIST_SYSTEM = (
     "levels of a single tag path (e.g. '#B&B::10_GI'), never two separate "
     "filters like ['#B&B', 'GI'], which also catches cards with any B&B tag "
     "plus any unrelated GI tag. If the same resource+topic exists under "
-    "several exams (e.g. '#AK_Step1_v12::#B&B::10_GI' and "
-    "'#AK_Step2_v12::#B&B::06_GI'), list each full substring in any_tags."
+    "several exams (e.g. '#Study_Step1::#B&B::10_GI' and "
+    "'#Study_Step2::#B&B::06_GI'), list each full substring in any_tags."
 )
 
 ASSIST_TOOLS = [
@@ -1575,8 +1579,8 @@ ASSIST_TOOLS = [
             "description": (
                 "List the child levels directly under a tag path, with the "
                 "number of notes beneath each. Start with prefix '' for the "
-                "top level, then descend (e.g. '#AK_Step1_v12', then "
-                "'#AK_Step1_v12::#B&B'). Use this when you can't guess a "
+                "top level, then descend (e.g. '#Study_Step1', then "
+                "'#Study_Step1::#B&B'). Use this when you can't guess a "
                 "tag's exact name."
             ),
             "parameters": {
@@ -1892,7 +1896,7 @@ def _search_completion(client, thinking: list[dict], *, iteration=1, phase="plan
 # with no model calls. Conservative: any doubt falls back to the AI finder.
 # ---------------------------------------------------------------------------
 
-# Spoken resource names -> the tag level AnKing-style decks use for them.
+# Spoken resource names -> resource labels used in hierarchical tags.
 RESOURCE_ALIASES = {
     "#B&B": ("boards and beyond", "boards & beyond", "boards n beyond", "b&b", "bnb", "b and b"),
     "#Pathoma": ("pathoma",),
@@ -2007,7 +2011,7 @@ def direct_tag_selection(selection: str, *, deck: str = "",
         start = next(i for i, p in enumerate(parts) if p.casefold() == resource.casefold())
         for end in range(start + 1, len(parts) + 1):
             below = [_words(p) for p in parts[start + 1:end]]
-            # Earlier levels (e.g. "#AK_Step1_v12") can satisfy "step1".
+            # Earlier levels (e.g. "#Study_Step1") can satisfy "step1".
             above = [_words(p) for p in parts[:start]]
             if all(any(_word_in_segment(w, seg) for seg in below + above) for w in topic):
                 matches.add(tuple(parts[:end]))

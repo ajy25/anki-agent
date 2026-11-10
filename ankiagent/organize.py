@@ -139,8 +139,8 @@ def clean_nids(raw: object, limit: int = MAX_NOTES) -> list[int]:
 
 def _deck_named_in(message: str, existing: list[str], name: str) -> str | None:
     """An existing deck the student named verbatim, when the model's name is a
-    shortened form of it: the full path ("AnKing Step Deck::GI cards" passed
-    as "AnKing Step Deck::GI") or a unique subdeck name ("GI subdeck" passed
+    shortened form of it: the full path ("Study Deck::GI cards" passed
+    as "Study Deck::GI") or a unique subdeck name ("GI subdeck" passed
     as "GI"). Longest match wins."""
     text = " " + " ".join(re.sub(r"[^\w:&]+", " ", (message or "").casefold().replace(" :: ", "::")).split()) + " "
     want = name.casefold()
@@ -163,7 +163,7 @@ def resolve_target(raw: object, existing: list[str], message: str = "") -> dict:
 
     Exact (case-insensitive) path wins; then an existing deck path the
     student typed verbatim in `message`; then a UNIQUE deck whose last level
-    matches (e.g. "GI" -> "AnKing Step Deck::GI"); otherwise the name is
+    matches (e.g. "GI" -> "Study Deck::GI"); otherwise the name is
     treated as a new deck, with close existing names offered as suggestions.
     """
     name = clean_deck_name(raw)
@@ -192,12 +192,12 @@ def _resolve_target(name: str, existing: list[str], message: str) -> dict:
     same_leaf = [d for d in existing if d.split("::")[-1].casefold() == leaf]
     if "::" not in name and len(same_leaf) == 1:
         return {"target": same_leaf[0], "exists": True, "suggestions": []}
-    # A new subdeck's own parents ("AnKing Step Deck" for "AnKing Step
-    # Deck::GI") aren't alternatives the student might have meant.
+    # A new subdeck's own parents ("Study Deck" for "Study Deck::GI")
+    # aren't alternatives the student might have meant.
     parts = name.casefold().split("::")
     ancestors = {"::".join(parts[:i]) for i in range(1, len(parts))}
     close = difflib.get_close_matches(name, existing, n=3, cutoff=0.6)
-    # "GI" -> "AnKing Step Deck::GI subdeck": subdecks whose name starts with it.
+    # "GI" -> "Study Deck::GI subdeck": subdecks whose name starts with it.
     starts = [d for d in existing if d.split("::")[-1].casefold().startswith(leaf)]
     suggestions = [d for d in dict.fromkeys(same_leaf + starts + close)
                    if d.casefold() not in ancestors][:5]

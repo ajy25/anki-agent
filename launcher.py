@@ -33,8 +33,7 @@ webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
 HOTKEY = os.environ.get("HOTKEY", "<ctrl>+<alt>+<space>")
 # Tutor mode is the launcher's default experience — a multi-turn tutor that
 # grounds its answers in the student's deck (agentic card search + citations).
-# The conversation resets whenever the window is hidden, so each hotkey-open
-# starts a fresh tutor conversation.
+# The chat-history preference controls whether hiding/reopening starts fresh.
 URL = ""
 
 
@@ -106,13 +105,13 @@ def _fit_to_screen():
         pass
 
 
-def _reset_tutor():
-    """Clear the Tutor-tab conversation so the next open starts fresh."""
+def _close_chat_window():
+    """Apply the chat-history preference before hiding the window."""
     if not window:
         return
     try:
         window.evaluate_js(
-            "if(window.resetTutor){try{window.resetTutor();}catch(e){}}"
+            "if(window.handleChatWindowClose){window.handleChatWindowClose();}"
         )
     except Exception:
         pass
@@ -123,7 +122,7 @@ def toggle():
     if not window:
         return
     if visible:
-        _reset_tutor()
+        _close_chat_window()
         window.hide()
         visible = False
     else:
@@ -150,7 +149,7 @@ class Api:
     def hide(self):
         global visible
         if window and visible:
-            _reset_tutor()
+            _close_chat_window()
             window.hide()
             visible = False
 

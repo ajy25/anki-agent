@@ -102,6 +102,37 @@ class StreamingTests(unittest.TestCase):
         self.assertTrue(any(e["event"] == "retry" for e in events))
         self.assertTrue(first.closed)
 
+    def test_named_tool_rejection_clears_partial_stream_before_recovery(self):
+        for model in ("openai/gpt-oss-120b", "qwen/qwen3.8-27b"):
+            with self.subTest(model=model):
+                def rejected():
+                    yield chunk(reasoning="This is a greeting.")
+                    yield chunk(text="Discard this partial reply")
+                    raise RuntimeError("Tool choice is required, but model did not call a tool")
+                first = Stream(rejected())
+                second = Stream([chunk(text="How can I help?", finish="stop")])
+                create = Mock(side_effect=[first, second])
+                events = []
+                with patch.object(llm, "get_client", return_value=client_for(create)):
+                    answer, sources, debug = llm.tutor_chat(
+                        [{"role": "user", "content": "hi"}], model=model, on_event=events.append,
+                    )
+                visible_answer = ""
+                for event in events:
+                    if event["event"] == "answer_reset":
+                        visible_answer = ""
+                    elif event["event"] == "answer_delta":
+                        visible_answer += event["text"]
+                self.assertEqual(answer, "How can I help?")
+                self.assertEqual(visible_answer, answer)
+                self.assertEqual(sources, [])
+                self.assertTrue(first.closed and second.closed)
+                self.assertEqual(create.call_count, 2)
+                self.assertEqual(create.call_args.kwargs["tool_choice"], "auto")
+                self.assertTrue(debug["tool_choice_fallback"])
+                self.assertEqual(debug["response_retries"], 0)
+                self.assertNotIn("error", debug)
+
     def test_cancelled_stream_closes_provider_without_retry(self):
         cancelled = threading.Event()
         stream = Stream([chunk(text="First"), chunk(text="Second", finish="stop")])

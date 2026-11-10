@@ -24,11 +24,11 @@ class FakeAnki:
 
     def __init__(self):
         self.cards = {  # card id -> (note id, deck)
-            11: (1, "AnKing Step Deck::B&B"), 12: (1, "AnKing Step Deck::B&B"),
-            21: (2, "AnKing Step Deck::Pathoma"),
+            11: (1, "Study Deck::B&B"), 12: (1, "Study Deck::B&B"),
+            21: (2, "Study Deck::Pathoma"),
             31: (3, "GI"),
         }
-        self.decks = {"AnKing Step Deck", "AnKing Step Deck::B&B", "AnKing Step Deck::Pathoma", "GI"}
+        self.decks = {"Study Deck", "Study Deck::B&B", "Study Deck::Pathoma", "GI"}
         self.calls = []
         self.media_path = str(ingest.DECK_PATH.parent / "collection.media")
 
@@ -77,7 +77,7 @@ class MoveTests(unittest.TestCase):
         env = patch.dict(os.environ, {"ANKIAGENT_DATA_DIR": tmp.name})
         env.start()
         self.addCleanup(env.stop)
-        scope = patch.object(ingest, "DECK_NAME", "AnKing Step Deck")
+        scope = patch.object(ingest, "DECK_NAME", "Study Deck")
         scope.start()
         self.addCleanup(scope.stop)
 
@@ -85,7 +85,7 @@ class MoveTests(unittest.TestCase):
         self.con.row_factory = sqlite3.Row
         self.addCleanup(self.con.close)
         self.con.executescript(ingest.SCHEMA)
-        for guid, nid, deck in (("g1", 1, "AnKing Step Deck::B&B"), ("g2", 2, "AnKing Step Deck::Pathoma")):
+        for guid, nid, deck in (("g1", 1, "Study Deck::B&B"), ("g2", 2, "Study Deck::Pathoma")):
             self.con.execute(
                 "INSERT INTO notes (guid, front, back, front_html, back_html, extras, tags_raw, deck, nid) "
                 "VALUES (?, 'f', 'b', '', '', '[]', '', ?, ?)", (guid, deck, nid))
@@ -129,20 +129,20 @@ class MoveTests(unittest.TestCase):
         self.assertTrue(p["target_exists"])
         self.assertTrue(p["outside_index_scope"])
         self.assertEqual({d["deck"]: d["cards"] for d in p["from_decks"]},
-                         {"AnKing Step Deck::B&B": 2, "AnKing Step Deck::Pathoma": 1})
+                         {"Study Deck::B&B": 2, "Study Deck::Pathoma": 1})
         self.assertNotIn("changeDeck", self.fake.calls)
 
     def test_subdeck_of_indexed_deck_is_a_valid_target_and_stays_searchable(self):
-        p = self.post("/api/move/preview", {"nids": [1, 2], "target": "AnKing Step Deck :: GI"}).get_json()
-        self.assertEqual(p["target"], "AnKing Step Deck::GI")
+        p = self.post("/api/move/preview", {"nids": [1, 2], "target": "Study Deck :: GI"}).get_json()
+        self.assertEqual(p["target"], "Study Deck::GI")
         self.assertFalse(p["target_exists"])
         self.assertFalse(p["outside_index_scope"])
-        moved = self.post("/api/move", {"nids": [1, 2], "target": "AnKing Step Deck::GI"}).get_json()
+        moved = self.post("/api/move", {"nids": [1, 2], "target": "Study Deck::GI"}).get_json()
         self.assertEqual(moved["moved"], 3)
-        self.assertEqual(self.fake.deck_of(21), "AnKing Step Deck::GI")
+        self.assertEqual(self.fake.deck_of(21), "Study Deck::GI")
         undo = self.post(f"/api/moves/{moved['id']}/undo").get_json()
         self.assertEqual(undo["restored"], 3)
-        self.assertEqual(self.fake.deck_of(11), "AnKing Step Deck::B&B")
+        self.assertEqual(self.fake.deck_of(11), "Study Deck::B&B")
 
     # --- move + undo ----------------------------------------------------------
 
@@ -163,10 +163,10 @@ class MoveTests(unittest.TestCase):
 
         undo = self.post(f"/api/moves/{moved['id']}/undo").get_json()
         self.assertEqual(undo["restored"], 3)
-        self.assertEqual(self.fake.deck_of(11), "AnKing Step Deck::B&B")
-        self.assertEqual(self.fake.deck_of(21), "AnKing Step Deck::Pathoma")
+        self.assertEqual(self.fake.deck_of(11), "Study Deck::B&B")
+        self.assertEqual(self.fake.deck_of(21), "Study Deck::Pathoma")
         decks = {r["guid"]: r["deck"] for r in self.con.execute("SELECT * FROM note_decks")}
-        self.assertEqual(decks["g1"], "AnKing Step Deck::B&B")
+        self.assertEqual(decks["g1"], "Study Deck::B&B")
         self.assertEqual(self.client.get("/api/moves").get_json()["moves"][0]["status"], "undone")
 
         again = self.post(f"/api/moves/{moved['id']}/undo")
@@ -178,7 +178,7 @@ class MoveTests(unittest.TestCase):
         self.fake.cards[12] = (1, "Somewhere else")     # user moved it by hand
         undo = organize.undo_move(moved["id"])
         self.assertEqual((undo["restored"], undo["skipped"]), (1, 1))
-        self.assertEqual(self.fake.deck_of(11), "AnKing Step Deck::B&B")
+        self.assertEqual(self.fake.deck_of(11), "Study Deck::B&B")
         self.assertEqual(self.fake.deck_of(12), "Somewhere else")
 
     def test_history_is_written_before_anki_changes(self):
@@ -240,36 +240,36 @@ class MoveTests(unittest.TestCase):
 
 
 class ResolveTargetTests(unittest.TestCase):
-    DECKS = ["AnKing Step Deck", "AnKing Step Deck::GI", "AnKing Step Deck::Renal",
+    DECKS = ["Study Deck", "Study Deck::GI", "Study Deck::Renal",
              "Step 2::Renal", "Default"]
 
     def test_exact_path_case_insensitive(self):
-        r = organize.resolve_target("anking step deck :: gi", self.DECKS)
-        self.assertEqual((r["target"], r["exists"]), ("AnKing Step Deck::GI", True))
+        r = organize.resolve_target("study deck :: gi", self.DECKS)
+        self.assertEqual((r["target"], r["exists"]), ("Study Deck::GI", True))
 
     def test_unique_leaf_name_matches_subdeck(self):
         r = organize.resolve_target("gi", self.DECKS)
-        self.assertEqual((r["target"], r["exists"]), ("AnKing Step Deck::GI", True))
+        self.assertEqual((r["target"], r["exists"]), ("Study Deck::GI", True))
 
     def test_ambiguous_leaf_becomes_new_deck_with_suggestions(self):
         r = organize.resolve_target("Renal", self.DECKS)
         self.assertEqual((r["target"], r["exists"]), ("Renal", False))
-        self.assertIn("AnKing Step Deck::Renal", r["suggestions"])
+        self.assertIn("Study Deck::Renal", r["suggestions"])
         self.assertIn("Step 2::Renal", r["suggestions"])
 
     def test_new_subdeck_does_not_suggest_its_own_parent(self):
-        r = organize.resolve_target("AnKing Step Deck::Cardio", self.DECKS)
-        self.assertEqual((r["target"], r["exists"]), ("AnKing Step Deck::Cardio", False))
-        self.assertNotIn("AnKing Step Deck", r["suggestions"])
+        r = organize.resolve_target("Study Deck::Cardio", self.DECKS)
+        self.assertEqual((r["target"], r["exists"]), ("Study Deck::Cardio", False))
+        self.assertNotIn("Study Deck", r["suggestions"])
 
     def test_deck_typed_verbatim_in_message_beats_shortened_model_name(self):
-        decks = self.DECKS + ["AnKing Step Deck::GI cards"]
-        msg = "Put all Boards and Beyond GI cards in AnKing Step Deck::GI cards"
-        r = organize.resolve_target("AnKing Step Deck::GI", decks, msg)
-        self.assertEqual((r["target"], r["exists"]), ("AnKing Step Deck::GI cards", True))
+        decks = self.DECKS + ["Study Deck::GI cards"]
+        msg = "Put all Boards and Beyond GI cards in Study Deck::GI cards"
+        r = organize.resolve_target("Study Deck::GI", decks, msg)
+        self.assertEqual((r["target"], r["exists"]), ("Study Deck::GI cards", True))
         # Without that deck in the message, the model's name stands.
-        r = organize.resolve_target("AnKing Step Deck::GI", decks, "move B&B GI to my GI deck")
-        self.assertEqual(r["target"], "AnKing Step Deck::GI")
+        r = organize.resolve_target("Study Deck::GI", decks, "move B&B GI to my GI deck")
+        self.assertEqual(r["target"], "Study Deck::GI")
 
     def test_unknown_deck_is_new(self):
         r = organize.resolve_target("Cardio", self.DECKS)
@@ -287,7 +287,7 @@ class AgentProposeMoveTests(unittest.TestCase):
             p = patch.object(target, "invoke", **kw)
             p.start()
             self.addCleanup(p.stop)
-        hits = [{"guid": "g1", "nid": 1, "front": "Achalasia", "back": "", "tags": ["#AK_Step1_v12::#B&B::10_GI"]},
+        hits = [{"guid": "g1", "nid": 1, "front": "Achalasia", "back": "", "tags": ["#Study_Step1::#B&B::10_GI"]},
                 {"guid": "g2", "nid": 2, "front": "Barrett", "back": "", "tags": []}]
         self.search = patch.object(llm, "assisted_search",
                                    return_value=(hits, {"tag_filters": ["#B&B::10_GI"], "explanation": "B&B GI tag"}, {}))
@@ -314,14 +314,14 @@ class AgentProposeMoveTests(unittest.TestCase):
         self.assertNotIn("propose_", self.llm.TUTOR_AGENT_SYSTEM)
 
     def test_proposal_is_recorded_but_nothing_moves(self):
-        s = self.session(deck="AnKing Step Deck")
+        s = self.session(deck="Study Deck")
         out = s._dispatch("propose_move", {"selection": "Boards and Beyond GI cards", "target_deck": "gi"})
         self.assertEqual(out["notes_matched"], 2)
         self.assertEqual(out["target_deck"], "GI")
         self.assertTrue(out["target_exists"])
         self.assertNotIn("nids", out)                        # ids stay out of the prompt
         self.assertEqual(s.proposals[0]["nids"], [1, 2])
-        self.assertEqual(self.search_mock.call_args.kwargs["deck"], "AnKing Step Deck")
+        self.assertEqual(self.search_mock.call_args.kwargs["deck"], "Study Deck")
         self.assertNotIn("changeDeck", self.fake.calls)
         self.assertNotIn("createDeck", self.fake.calls)
 

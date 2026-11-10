@@ -16,17 +16,17 @@ with patch.dict(os.environ, {"DECK_PATH": "/unused/collection.anki2", "DECK_NAME
 with patch.object(ingest, "ensure_built", return_value=None):
     app_module = importlib.import_module("ankiagent.app")
 
-S1 = "#AK_Step1_v12::#B&B"
-S2 = "#AK_Step2_v12::#B&B"
+S1 = "#Study_Step1::#B&B"
+S2 = "#Study_Step2::#B&B"
 NOTES = {  # guid -> (nid, deck, tags)
-    "a": (1, "AnKing", [f"{S1}::10_GI::01_Anatomy::01_Gastrointestinal_Embryology"]),
-    "b": (2, "AnKing", [f"{S1}::10_GI::01_Anatomy::02_Gastrointestinal_Anatomy::Extra"]),
+    "a": (1, "Study Deck", [f"{S1}::10_GI::01_Anatomy::01_Gastrointestinal_Embryology"]),
+    "b": (2, "Study Deck", [f"{S1}::10_GI::01_Anatomy::02_Gastrointestinal_Anatomy::Extra"]),
     "c": (3, "Other", [f"{S1}::10_GI::01_Anatomy"]),
-    "d": (4, "AnKing", [f"{S1}::10_GIX"]),                    # shares a prefix, not beneath
-    "e": (5, "AnKing", [f"{S1}::10_GI::02_GI_Physiology"]),
-    "f": (6, "AnKing", [f"{S2}::06_GI::01_Esophagus"]),
-    "g": (7, "AnKing", [f"{S1}::06_Cardio::01_Anatomy"]),
-    "h": (8, "AnKing", ["#AK_Step1_v12::#Pathoma::Ch10"]),
+    "d": (4, "Study Deck", [f"{S1}::10_GIX"]),                    # shares a prefix, not beneath
+    "e": (5, "Study Deck", [f"{S1}::10_GI::02_GI_Physiology"]),
+    "f": (6, "Study Deck", [f"{S2}::06_GI::01_Esophagus"]),
+    "g": (7, "Study Deck", [f"{S1}::06_Cardio::01_Anatomy"]),
+    "h": (8, "Study Deck", ["#Study_Step1::#Pathoma::Ch10"]),
 }
 
 
@@ -70,7 +70,7 @@ class DirectTagSelectionTests(IndexBase):
         self.assertEqual(nids, [1, 2, 3, 5])                    # not "10_GIX"
 
     def test_deck_scope_is_applied(self):
-        self.assertEqual(self.select("B&B GI anatomy", deck="AnKing")[0], [1, 2])
+        self.assertEqual(self.select("B&B GI anatomy", deck="Study Deck")[0], [1, 2])
 
     def test_no_resource_or_unmatched_topic_falls_back_to_ai(self):
         self.assertIsNone(self.select("GI anatomy"))                       # no resource named
@@ -107,7 +107,7 @@ class DirectTagSelectionTests(IndexBase):
 
         def invoke(action, **params):
             fake.calls.append(action)
-            return {"version": 6, "deckNames": ["Default", "AnKing::GI"]}[action]
+            return {"version": 6, "deckNames": ["Default", "Study Deck::GI"]}[action]
 
         events = []
         with patch.object(anki_connect, "invoke", side_effect=invoke), \
@@ -117,7 +117,7 @@ class DirectTagSelectionTests(IndexBase):
             out = s._dispatch("propose_move", {"selection": "Boards and Beyond GI anatomy",
                                                "target_deck": "GI"})
         self.assertEqual(out["notes_matched"], 3)
-        self.assertEqual(out["target_deck"], "AnKing::GI")
+        self.assertEqual(out["target_deck"], "Study Deck::GI")
         self.assertEqual(s.proposals[0]["nids"], [1, 2, 3])
         self.assertIn("Matched tag", events[0]["step"]["text"])
         self.assertNotIn("changeDeck", fake.calls)
@@ -126,12 +126,12 @@ class DirectTagSelectionTests(IndexBase):
 class DeckNameTests(unittest.TestCase):
     def test_possessive_names_resolve_to_the_existing_deck(self):
         from ankiagent import organize
-        decks = ["Default", "AnKing Step Deck::GI subdeck", "AnKing Step Deck::GI cards"]
+        decks = ["Default", "Study Deck::GI subdeck", "Study Deck::GI cards"]
         msg = "move the GI anatomy boards and beyond cards to my gi subdeck"
         self.assertEqual(organize.resolve_target("my gi subdeck", decks, msg)["target"],
-                         "AnKing Step Deck::GI subdeck")
+                         "Study Deck::GI subdeck")
         self.assertEqual(organize.resolve_target("the GI cards", decks, "")["target"],
-                         "AnKing Step Deck::GI cards")
+                         "Study Deck::GI cards")
         new = organize.resolve_target("My Deck", decks, "")       # a real new name stays as typed
         self.assertEqual((new["target"], new["exists"]), ("My Deck", False))
 

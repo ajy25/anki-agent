@@ -923,6 +923,7 @@ body.mode-tutor .results > .tutor-shell {
 .tutor-settings-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
 .tutor-settings-heading h2 { margin: 0; font-size: 20px; }
 .tutor-settings-dialog label { display: block; font-weight: 600; margin-bottom: 6px; }
+.tutor-settings-dialog .chat-history-option { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
 .tutor-settings-dialog .muted { color: var(--text-dim); font-size: 13px; line-height: 1.5; margin: 8px 0 12px; }
 .tutor-settings-dialog textarea, .tutor-settings-dialog select {
   background: var(--bg-card); color: var(--text); border: 1px solid var(--border-strong);

@@ -125,6 +125,12 @@
         <option value="1.25">Large (125%)</option><option value="1.5">Extra large (150%)</option>
       </select>
       <p class="muted">Text size changes immediately and is remembered on this device.</p>
+      <label class="chat-history-option" for="clear-chat-on-close">
+        <input type="checkbox" id="clear-chat-on-close" checked>
+        Clear chat history when closing and reopening
+      </label>
+      <p class="muted">Applies immediately to Tutor and Organize. Turn off to keep chats on this Mac between launches. Clear chat always starts a fresh conversation in the current tab. Saved Organize chats do not restore action buttons.</p>
+      <p id="chat-history-status" role="status" aria-live="polite"></p>
       <fieldset id="tutor-prompt-fields" disabled>
         <label for="tutor-system-prompt">System prompt</label>
         <p class="muted" id="tutor-prompt-help">Edit the instructions that guide Tutor’s answers. Saved changes apply to your next message; start a new chat for a fresh conversation.</p>

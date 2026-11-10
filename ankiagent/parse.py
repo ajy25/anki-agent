@@ -1,4 +1,4 @@
-"""Parse the AnKing TSV export into structured note records.
+"""Parse the supported 19-field Anki TSV export into structured note records.
 
 The deck file is a tab-separated export from Anki:
   - First few lines are `#key:value` metadata comments.
@@ -45,7 +45,7 @@ class Note:
     tags_raw: str = ""
     tags: list[str] = field(default_factory=list)
     # Full hierarchical deck path(s) this note's cards live in, "::" between
-    # levels (e.g. "AnKing Step Deck::Review::5. Hematology"). A note can span
+    # levels (e.g. "Study Deck::Review::5. Hematology"). A note can span
     # more than one deck. Empty for TSV exports (no deck metadata).
     decks: list[str] = field(default_factory=list)
     # Anki's numeric note id (notes.id) — searchable in the Anki browser as
@@ -165,7 +165,7 @@ def split_tags(tags_raw: str) -> list[str]:
 
 
 def iter_notes(path: str | Path) -> Iterator[Note]:
-    """Yield Note records from an AnKing TSV export."""
+    """Yield Note records from a supported 19-field Anki TSV export."""
     p = Path(path)
     with p.open("r", encoding="utf-8", newline="") as f:
         # Skip leading `#key:value` metadata lines.
@@ -208,9 +208,9 @@ def iter_notes(path: str | Path) -> Iterator[Note]:
 # Instead of a static TSV export, we can read the student's actual Anki
 # collection on disk (e.g. ~/Library/Application Support/Anki2/<profile>/
 # collection.anki2). It's an SQLite database. We select notes by *deck name*
-# (the hierarchical name shown in Anki's sidebar, e.g. "AnKing Step Deck"),
-# which selects that deck and all of its subdecks. This is deck-agnostic: it
-# works for any deck, not just AnKing. Each note's fields are mapped onto our
+# (the hierarchical name shown in Anki's sidebar, e.g. "Study Deck"),
+# which selects that deck and all of its subdecks. This works for any deck.
+# Each note's fields are mapped onto our
 # Note by name (Text/Front -> front, Extra/Back -> back, the rest -> extras),
 # with a positional fallback so arbitrary note types still parse.
 
@@ -314,7 +314,7 @@ def iter_notes_anki2(
 
     If `deck_name` is given, only notes with a card in that deck (or any of its
     subdecks) are yielded; the name is the one shown in Anki, with `::` between
-    levels (e.g. "AnKing Step Deck" or "AnKing Step Deck::Review"). If omitted,
+    levels (e.g. "Study Deck" or "Study Deck::Review"). If omitted,
     the whole collection is indexed. Fields are mapped onto front/back/extras by
     name with a positional fallback, so any note type parses.
     """
@@ -409,9 +409,9 @@ def iter_deck_notes(path: str | Path, deck_name: str | None = None) -> Iterator[
     """Yield Note records from either a live Anki collection or a TSV export.
 
     Dispatches on file content: an SQLite database is read as a collection
-    (.anki2, filtered by `deck_name`), anything else is parsed as an AnKing TSV
-    text export (.txt) — TSV exports have no deck metadata, so `deck_name` is
-    ignored for them.
+    (.anki2, filtered by `deck_name`), anything else is parsed as a supported
+    19-field Anki TSV text export (.txt). TSV exports have no deck metadata,
+    so `deck_name` is ignored for them.
     """
     p = Path(path)
     if p.suffix.lower() == ".apkg":

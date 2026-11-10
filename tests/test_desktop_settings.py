@@ -20,6 +20,16 @@ with patch.dict("sys.modules", {"pynput": SimpleNamespace(
 
 
 class DesktopSettingsTests(unittest.TestCase):
+    def test_hide_and_hotkey_use_the_chat_history_preference(self):
+        for hide in (launcher.Api().hide, launcher.toggle):
+            with self.subTest(hide=hide), patch.object(launcher, "visible", True), patch.object(launcher, "window", Mock()) as window:
+                hide()
+                window.evaluate_js.assert_called_once_with(
+                    "if(window.handleChatWindowClose){window.handleChatWindowClose();}"
+                )
+                window.hide.assert_called_once()
+                self.assertFalse(launcher.visible)
+
     def test_native_actions_select_models_through_the_ui(self):
         with patch.dict(os.environ, {"LLM_PROVIDER": "groq", "LLM_MODEL": "openai/gpt-oss-120b"}):
             settings, = launcher.settings_menu()

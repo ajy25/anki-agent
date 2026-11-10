@@ -5,4 +5,3 @@ python-dotenv>=1.0
 bleach>=6.1
 pywebview>=6.1
 pyobjc-core>=10.0
-pyobjc-framework-Security>=10.0; sys_platform == "darwin"

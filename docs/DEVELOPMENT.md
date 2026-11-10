@@ -18,7 +18,7 @@ python -m pip install -r requirements.txt
 python launcher.py
 ```
 
-The setup screen handles the Groq key, Anki profile, and deck selection. It saves the key in macOS Keychain and preferences in `~/Library/Application Support/Anki Agent/`. A preexisting `.env` can supply initial settings, but once settings have been saved, use the setup screen to change them.
+The setup screen handles the Groq key, Anki profile, and deck selection. It saves the key in a private, plaintext `.env` file (mode `0600`) and preferences in `~/Library/Application Support/Anki Agent/`. The desktop app does not access Keychain. A preexisting `.env` can supply initial settings, but once settings have been saved, use the setup screen to change them.
 
 To create a double-clickable development shortcut:
 
@@ -110,7 +110,7 @@ desktop_entry.py        Packaged desktop entry point and smoke test
 create_shortcut.py      Source-backed .app shortcut and icon generation
 ankiagent/
   desktop.py            Setup routes and background deck preparation
-  settings.py           Per-user preferences and macOS Keychain
+  settings.py           Per-user preferences and app-managed .env credentials
   hotkeys.py            Native macOS hotkey registration
   app.py                Study UI server and APIs
   ingest.py             Search-index creation

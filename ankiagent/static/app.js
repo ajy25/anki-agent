@@ -35,15 +35,14 @@ const CHAT_UI = {
     placeholder: "Message the tutor…  (Enter to send, Shift+Enter for newline)",
     emptyTitle: "Ask the tutor anything",
     emptySub: `The tutor searches your deck and grounds its answer in real cards,
-          citing them inline — sources show on the right.
-          Closing the launcher will start a fresh conversation.`,
+          citing them inline — sources show on the right.`,
   },
   agent: {
     title: "Organize", endpoint: "/api/agent",
-    placeholder: "Describe what to change, e.g. “move all Boards and Beyond GI cards to my GI deck”  (Enter to send)",
+    placeholder: "Describe what to change, e.g. “move my cardiology cards to my Cardiology deck”  (Enter to send)",
     emptyTitle: "Organize your Anki deck",
     emptySub: `Move, suspend, or unsuspend cards, e.g.
-          “put all Boards and Beyond GI cards in my GI deck” or “in my GI deck,
+          “move my cardiology cards to my Cardiology deck” or “in my GI deck,
           suspend everything except GERD”. You'll see every card in a preview
           and confirm before anything changes, and you can undo.
           Study questions go to the Tutor tab.`,
@@ -61,6 +60,7 @@ async function boot() {
   if (initialMode && VALID_MODES.has(initialMode)) {
     state.mode = initialMode;
   }
+  restoreChatHistory();
   if (isChat(state.mode)) state.tutorMessages = state.chatStore[state.mode];
 
   bindUi();
@@ -73,6 +73,7 @@ async function boot() {
 
   // Allow the launcher to reset the tutor conversation on window hide.
   window.resetTutor = () => resetTutor({ all: true });
+  window.handleChatWindowClose = handleChatWindowClose;
 
   await Promise.all([loadStats(), loadTags(), loadDecks()]);
   if (qs.get("settings") === "tutor") openTutorSettings();
@@ -1332,14 +1333,17 @@ function renderTutor() {
       <div class="tutor-main">
         <div class="tutor-toolbar">
           <span class="tutor-title">${CHAT_UI[state.mode].title}</span>
-          ${state.mode === "tutor" ? `<div class="tutor-controls">
+          <div class="tutor-controls">
+            ${state.mode === "tutor" ? `
             <label for="tutor-text-size">Text size</label>
             <select id="tutor-text-size">
               <option value="0.75">Small</option><option value="1">Default</option>
               <option value="1.25">Large</option><option value="1.5">Extra large</option>
             </select>
+            ` : ""}
             <button type="button" id="tutor-open-settings">Settings</button>
-          </div>` : ""}
+            <button type="button" id="tutor-clear-chat">Clear chat</button>
+          </div>
         </div>
         ${state.mode === "agent" ? `
         <section class="organize-connection" id="organize-connection" aria-label="Anki connection">
@@ -1395,10 +1399,11 @@ function renderTutor() {
   });
 
   renderTutorMessages();
+  $("#tutor-clear-chat").addEventListener("click", () => resetTutor());
+  $("#tutor-open-settings").addEventListener("click", openTutorSettings);
   if (state.mode === "tutor") {
     applyTutorTextScale(readTutorTextScale());
     $("#tutor-text-size").addEventListener("change", (event) => setTutorTextScale(event.target.value));
-    $("#tutor-open-settings").addEventListener("click", openTutorSettings);
   }
   if (state.mode === "agent") {
     $("#organize-check-again").addEventListener("click", checkOrganizeConnection);
@@ -1408,6 +1413,67 @@ function renderTutor() {
 }
 
 const TUTOR_TEXT_SCALES = [0.75, 1, 1.25, 1.5];
+
+const CHAT_HISTORY_KEY = "ankiagent.chatHistory";
+const CLEAR_CHAT_KEY = "ankiagent.clearChatOnClose";
+
+function readClearChatOnClose() {
+  try { return localStorage.getItem(CLEAR_CHAT_KEY) !== "false"; }
+  catch { return true; }
+}
+
+function persistChatHistory() {
+  try {
+    if (readClearChatOnClose()) {
+      localStorage.removeItem(CHAT_HISTORY_KEY);
+    } else {
+      if (isChat(state.mode)) state.chatStore[state.mode] = state.tutorMessages;
+      // Action proposals need a fresh review and must not survive a restart.
+      const history = Object.fromEntries(["tutor", "agent"].map(mode => [mode,
+        state.chatStore[mode].map(({role, content, sources, debug, thinkingOpen, stopped, error}) =>
+          ({role, content, sources, debug, thinkingOpen, stopped, error})),
+      ]));
+      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
+    }
+    return true;
+  } catch {
+    $("#chat-history-status").textContent = "Couldn't save chat history on this device. Keep the app open to retain this chat.";
+    return false;
+  }
+}
+
+function restoreChatHistory() {
+  if (readClearChatOnClose()) { persistChatHistory(); return; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "{}");
+    for (const mode of ["tutor", "agent"]) {
+      if (!Array.isArray(saved?.[mode])) continue;
+      state.chatStore[mode] = saved[mode].filter(m => m &&
+        ["user", "assistant"].includes(m.role) && typeof m.content === "string")
+        .map(({role, content, sources, debug, thinkingOpen, stopped, error}) =>
+          ({role, content, sources, debug, thinkingOpen, stopped, error}));
+    }
+  } catch { /* Ignore a damaged history file; the current chat stays usable. */ }
+}
+
+function setClearChatOnClose(enabled) {
+  try {
+    localStorage.setItem(CLEAR_CHAT_KEY, String(enabled));
+    $("#chat-history-status").textContent = "";
+    persistChatHistory();
+  } catch {
+    $("#chat-history-status").textContent = "Couldn't save this preference. Please try again.";
+  }
+  $("#clear-chat-on-close").checked = readClearChatOnClose();
+}
+
+function handleChatWindowClose() {
+  if (readClearChatOnClose()) resetTutor({all: true});
+  else {
+    if (state.tutorPending) stopTutor();
+    persistChatHistory();
+  }
+}
 
 function readTutorTextScale() {
   try {
@@ -1441,6 +1507,7 @@ function bindTutorSettings() {
   window.openTutorSettings = openTutorSettings;
   $("#tutor-settings-close").addEventListener("click", () => $("#tutor-settings-dialog").close());
   $("#tutor-settings-size").addEventListener("change", (event) => setTutorTextScale(event.target.value));
+  $("#clear-chat-on-close").addEventListener("change", (event) => setClearChatOnClose(event.target.checked));
   $("#tutor-prompt-reset").addEventListener("click", () => {
     if (!tutorPromptDefaults) return;
     $("#tutor-system-prompt").value = tutorPromptDefaults.system_prompt;
@@ -1455,6 +1522,8 @@ async function openTutorSettings() {
   if (dialog.open) return;
   dialog.showModal();
   applyTutorTextScale(readTutorTextScale());
+  $("#clear-chat-on-close").checked = readClearChatOnClose();
+  $("#chat-history-status").textContent = "";
   const request = ++tutorSettingsRequest;
   tutorPromptDefaults = null;
   $("#tutor-prompt-fields").disabled = true;
@@ -1601,8 +1670,7 @@ function cancelTutorRequest() {
   state.tutorLive = null;
 }
 
-// Clears the conversation in the current chat tab. The launcher calls this on
-// window hide, which starts both chat tabs fresh.
+// Clear the current tab manually, or both tabs when automatic clearing is on.
 function resetTutor({ all = false } = {}) {
   cancelTutorRequest();
   $("#image-viewer").close();
@@ -1611,6 +1679,7 @@ function resetTutor({ all = false } = {}) {
     state.chatStore[state.mode] = [];
     state.tutorMessages = state.chatStore[state.mode];
   }
+  persistChatHistory();
   if (isChat(state.mode)) {
     renderTutorMessages();
     const input = $("#tutor-input");
@@ -1623,6 +1692,7 @@ function resetTutor({ all = false } = {}) {
 }
 
 function renderTutorMessages() {
+  persistChatHistory();
   const list = $("#tutor-messages");
   if (!list) return;
   const previousScroll = list.scrollTop;
