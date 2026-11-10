@@ -11,7 +11,17 @@ GET  /api/tags          top tags (count-desc)
 GET  /api/decks         deck/subdeck hierarchy with note counts
 GET  /api/stats         index stats
 GET  /media            filename=  (images from Anki's media folder)
-POST /api/tutor         multi-turn deck-grounded tutor (agentic, cited)
+POST /api/tutor         multi-turn deck-grounded tutor (agentic, cited); read-only
+POST /api/agent         "Organize": prepares moves/suspends the user confirms
+
+Moving cards (writes to Anki via AnkiConnect; see organize.py)
+GET  /api/anki/decks        live deck names for the move picker
+POST /api/move/preview      nids + target -> what would move (read-only)
+POST /api/move              nids + target -> move cards (user-confirmed)
+GET  /api/moves             recent moves (undo history)
+POST /api/moves/<id>/undo   reverse a move or suspend batch
+POST /api/cards/preview     suspend/unsuspend: what would change (read-only)
+POST /api/cards/apply       suspend/unsuspend cards (user-confirmed)
 """
 
 from __future__ import annotations
@@ -29,7 +39,7 @@ from flask import Flask, Response, abort, jsonify, render_template, request, sen
 from .ingest import DECK_PATH, ensure_built
 from .media import IMAGE_TYPES, is_media_filename, resolve_media_dir, rewrite_image_sources
 from .parse import DISPLAY_ALLOWED_ATTRS, DISPLAY_ALLOWED_TAGS
-from . import search
+from . import ingest, search
 from .llm_client import available_models, get_model
 
 load_dotenv()
@@ -277,6 +287,174 @@ def api_deep_search():
     })
 
 
+# ---------------------------------------------------------------------------
+# Moving cards between decks (writes to Anki through AnkiConnect)
+# ---------------------------------------------------------------------------
+
+_WRITE_PATHS = ("/api/move", "/api/moves", "/api/cards", "/api/tutor/settings")
+
+
+@app.before_request
+def _guard_writes():
+    """Only the app's own page may trigger writes.
+
+    Requiring a JSON body forces a CORS preflight for any cross-site request
+    (which this server never approves), and a present Origin must match us.
+    """
+    if request.method != "POST" or not request.path.startswith(_WRITE_PATHS):
+        return None
+    origin = request.headers.get("Origin")
+    if origin and origin.split("://", 1)[-1] != request.host:
+        return jsonify({"error": "Cross-site request refused."}), 403
+    if not request.is_json:
+        return jsonify({"error": "Expected a JSON request."}), 415
+    return None
+
+
+@app.route("/api/tutor/settings", methods=["GET", "POST"])
+def api_tutor_settings():
+    from .tutor_settings import default_prompts, read_prompts, save_prompts
+    try:
+        settings = save_prompts(request.get_json(silent=True)) if request.method == "POST" else read_prompts()
+        response = jsonify({"settings": settings, "defaults": default_prompts()})
+    except ValueError as error:
+        response = jsonify(error=str(error))
+        response.status_code = 400
+    except OSError:
+        response = jsonify(error="Couldn't save Tutor settings. Please try again.")
+        response.status_code = 500
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _anki_error(e: Exception):
+    from .anki_connect import AnkiConnectError
+    from .organize import StalePreview
+    if isinstance(e, StalePreview):
+        return jsonify({"error": str(e), "preview_required": True}), 409
+    if isinstance(e, ValueError):
+        return jsonify({"error": str(e)}), 400
+    if isinstance(e, AnkiConnectError):
+        return jsonify({"error": str(e), "anki_unavailable": True}), 503
+    app.logger.warning("Anki change failed: %s", e)
+    return jsonify({"error": "Something went wrong talking to Anki. Check Recent changes before trying again."}), 500
+
+
+@app.route("/api/anki/status")
+def api_anki_status():
+    """Quick, read-only connection check for Organize's setup notice."""
+    from . import anki_connect
+    try:
+        version = anki_connect.check(timeout=3.0, collection_path=ingest.DECK_PATH)
+        response = jsonify({"connected": True, "version": version})
+    except Exception as e:
+        response = app.make_response(_anki_error(e))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/anki/decks")
+def api_anki_decks():
+    """Every deck in the live Anki collection (via AnkiConnect), for the picker."""
+    from . import anki_connect
+    try:
+        anki_connect.check(collection_path=ingest.DECK_PATH)
+        return jsonify({"decks": anki_connect.deck_names()})
+    except Exception as e:
+        return _anki_error(e)
+
+
+@app.route("/api/move/preview", methods=["POST"])
+def api_move_preview():
+    """Body: {"nids": [...], "target": "GI"} -> what a move would do. Read-only."""
+    from . import organize
+    data = request.get_json(silent=True) or {}
+    try:
+        nids = organize.clean_nids(data.get("nids"))
+        return jsonify(organize.preview_move(nids, data.get("target")))
+    except Exception as e:
+        return _anki_error(e)
+
+
+@app.route("/api/move", methods=["POST"])
+def api_move():
+    """Body: {"nids": [...], "target": "GI", "label": "..."} -> move the cards.
+
+    Only ever called from the user's Confirm click in the move dialog.
+    """
+    from . import organize
+    data = request.get_json(silent=True) or {}
+    try:
+        nids = organize.clean_nids(data.get("nids"))
+        return jsonify(organize.move_notes(nids, data.get("target"), preview_id=data.get("preview_id"),
+                                          label=str(data.get("label") or "")))
+    except Exception as e:
+        return _anki_error(e)
+
+
+NOTES_PAGE_MAX = 100
+
+
+@app.route("/api/notes", methods=["POST"])
+def api_notes():
+    """Body: {"nids": [...]} (up to 100) -> full notes for a change preview,
+    in the requested order. Read-only. Notes missing from this app's index are
+    listed in `missing` so the UI can say why they can't be shown."""
+    data = request.get_json(silent=True) or {}
+    raw = data.get("nids")
+    if not isinstance(raw, list) or len(raw) > NOTES_PAGE_MAX:
+        return jsonify({"error": f"Send a list of up to {NOTES_PAGE_MAX} note ids."}), 400
+    try:
+        nids = [int(n) for n in raw]
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid note id."}), 400
+    found = search.notes_by_nids(nids)
+    return jsonify({
+        "notes": [_present(found[n]) for n in nids if n in found],
+        "missing": [n for n in nids if n not in found],
+    })
+
+
+@app.route("/api/cards/preview", methods=["POST"])
+def api_cards_preview():
+    """Body: {"action": "suspend"|"unsuspend", "deck", "nids"|null, "exclude_nids"}.
+    Read-only count of what would change."""
+    from . import organize
+    try:
+        spec = organize.clean_card_spec(request.get_json(silent=True) or {})
+        return jsonify(organize.preview_card_action(spec))
+    except Exception as e:
+        return _anki_error(e)
+
+
+@app.route("/api/cards/apply", methods=["POST"])
+def api_cards_apply():
+    """Suspend/unsuspend cards. Only called from the user's Confirm click."""
+    from . import organize
+    data = request.get_json(silent=True) or {}
+    try:
+        spec = organize.clean_card_spec(data)
+        return jsonify(organize.apply_card_action(spec, preview_id=data.get("preview_id"),
+                                                 label=str(data.get("label") or "")))
+    except Exception as e:
+        return _anki_error(e)
+
+
+@app.route("/api/moves")
+def api_moves():
+    from . import organize
+    return jsonify({"moves": organize.list_moves()})
+
+
+@app.route("/api/moves/<move_id>/undo", methods=["POST"])
+def api_move_undo(move_id: str):
+    from . import organize
+    try:
+        return jsonify(organize.undo_move(move_id))
+    except Exception as e:
+        return _anki_error(e)
+
+
 def _stream_response(run, failure_message: str) -> Response:
     """Bridge synchronous inference to SSE with backpressure and cancellation."""
     from .llm import TutorCancelled
@@ -297,7 +475,7 @@ def _stream_response(run, failure_message: str) -> Response:
             payload = run(emit, cancelled)
             debug = payload.get("debug") or {}
             if debug.get("error") or debug.get("finalize_error"):
-                emit({**payload, "event": "error", "error": failure_message})
+                emit({**payload, "event": "error", "error": debug.get("user_error") or failure_message})
             else:
                 emit({**payload, "event": "done"})
         except TutorCancelled:
@@ -334,26 +512,30 @@ def _stream_response(run, failure_message: str) -> Response:
     return response
 
 
-def _stream_tutor(messages: list[dict], *, deck: str, model: str) -> Response:
-    def run(emit, cancelled):
-        from .llm import tutor_chat
-        answer, sources, debug = tutor_chat(messages, deck=deck, model=model,
-            on_event=emit, cancelled=cancelled)
-        return {"answer": answer, "sources": [
-            {**_present(s), "ref": s.get("ref"), "cited": s.get("cited", False)} for s in sources
-        ], "debug": debug}
-    return _stream_response(run, "The tutor couldn't produce an answer after multiple attempts. Please try again shortly.")
+def _proposals(debug: dict) -> list[dict]:
+    """Card moves the agent prepared this turn (popped so note ids aren't
+    duplicated inside `debug`). The UI renders each as a Review & move button."""
+    keep = ("id", "action", "selection", "target", "target_exists", "suggestions", "count",
+            "nids", "deck", "except_selection", "exclude_nids", "kept", "kept_sample", "changes")
+    return [{k: p[k] for k in keep if k in p} for p in (debug.pop("move_proposals", None) or [])]
 
 
-@app.route("/api/tutor", methods=["POST"])
-def api_tutor():
-    """Agentic, deck-grounded tutor. Searches the deck and cites cards.
+def _chat_endpoint(chat_name: str, *, label: str, proposals: bool):
+    """Shared request handling for the Tutor and Organize chats.
 
     Body: {"messages": [{"role": "user"|"assistant", "content": "..."}, ...]}
     The last message must be from the user (the current turn); earlier ones
     are prior conversation turns used for follow-up context.
-    Returns: {"answer", "sources", "debug"} or {"error": ...}.
+    `proposals` adds the changes Organize prepared (never set for Tutor).
     """
+    import importlib
+
+    def chat_fn():
+        # Resolved per request through the import system (like the original
+        # `from .llm import tutor_chat`), so the module can be swapped in tests.
+        return getattr(importlib.import_module(".llm", __package__), chat_name)
+
+    failure = f"{label} couldn't produce an answer after multiple attempts. Please try again shortly."
     data = request.get_json(silent=True) or {}
     try:
         model = get_model(data.get("model"))
@@ -384,29 +566,54 @@ def api_tutor():
     if not cleaned or cleaned[-1]["role"] != "user":
         return jsonify({"error": "need_user_message"}), 400
     deck = str(data.get("deck", "")).strip()
+
+    def payload(answer, sources, debug):
+        out = {"answer": answer, "sources": [
+            {**_present(s), "ref": s.get("ref"), "cited": s.get("cited", False)} for s in sources
+        ]}
+        if proposals:
+            out["proposals"] = _proposals(debug)
+        else:
+            debug.pop("move_proposals", None)
+        out["debug"] = debug
+        return out
+
     if data.get("stream") is True:
-        return _stream_tutor(cleaned, deck=deck, model=model)
+        def run(emit, cancelled):
+            return payload(*chat_fn()(cleaned, deck=deck, model=model, on_event=emit, cancelled=cancelled))
+        return _stream_response(run, failure)
     try:
-        from .llm import tutor_chat
-        answer, sources, debug = tutor_chat(cleaned, deck=deck, model=model)
+        answer, sources, debug = chat_fn()(cleaned, deck=deck, model=model)
     except Exception as e:
-        app.logger.warning("tutor_chat failed: %s", e)
+        app.logger.warning("%s failed: %s", chat_name, e)
         return jsonify({"error": str(e)}), 500
     if debug.get("error") or debug.get("finalize_error"):
         app.logger.warning(
-            "Tutor failed after retries: model=%s retries=%d error=%s",
+            "%s failed after retries: model=%s retries=%d error=%s", label,
             model, debug.get("response_retries", 0),
             debug.get("error") or debug.get("finalize_error"),
         )
-        return jsonify({
-            "error": "The tutor couldn't produce an answer after multiple attempts. Please try again shortly.",
-            "sources": [], "debug": debug,
-        }), 502
-    presented = [
-        {**_present(s), "ref": s.get("ref"), "cited": s.get("cited", False)}
-        for s in sources
-    ]
-    return jsonify({"answer": answer, "sources": presented, "debug": debug})
+        debug.pop("move_proposals", None)
+        return jsonify({"error": debug.get("user_error") or failure, "sources": [], "debug": debug}), 502
+    return jsonify(payload(answer, sources, debug))
+
+
+@app.route("/api/tutor", methods=["POST"])
+def api_tutor():
+    """Agentic, deck-grounded tutor. Searches the deck and cites cards.
+    Read-only: it has no tools that change the collection.
+    Returns: {"answer", "sources", "debug"} or {"error": ...}.
+    """
+    return _chat_endpoint("tutor_chat", label="The tutor", proposals=False)
+
+
+@app.route("/api/agent", methods=["POST"])
+def api_agent():
+    """Organize tab: prepares moves / suspends from plain-English requests.
+    Returns: {"answer", "sources", "proposals", "debug"} or {"error": ...}.
+    Nothing changes until the user confirms a proposal in the UI.
+    """
+    return _chat_endpoint("agent_chat", label="Organize", proposals=True)
 
 
 def main() -> None:

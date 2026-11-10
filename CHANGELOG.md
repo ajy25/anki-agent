@@ -2,6 +2,19 @@
 
 User-visible changes are recorded here, newest version first.
 
+## Unreleased
+
+### Added
+
+- **Tutor settings:** adjustable text size, editable system and first-reply instructions, and a restore-defaults option. Saved instructions apply to the next Tutor request.
+- **AnkiConnect setup notice:** Organize checks the connection on entry and shows installation steps and a **Check again** button when Anki is unavailable.
+- **Move to deck:** move every card of a result set into another Anki deck (for example, all Boards & Beyond GI cards into a personal GI deck). A preview shows how many cards will move and from where before anything changes.
+- **Organize tab:** ask in plain English to move cards ("put all Boards and Beyond GI cards in my GI deck") or to suspend/unsuspend them ("in my GI deck, suspend everything except GERD"). It finds the cards, matches your deck, and shows a **Review** button.
+- **Card previews:** before you confirm, the preview lists every affected card with its images, in compact rows that expand to the full card. Suspends list the cards kept and the cards suspended.
+- The **Tutor** tab is unchanged and stays read-only.
+- **Undo:** every move or suspend is logged, and **Recent changes** can reverse it.
+- Moves go through the AnkiConnect add-on, so Anki must be open with AnkiConnect installed.
+
 ## [1.3.1 (preview)](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1) — 2026-11-07
 
 First public preview and the first version included in this changelog.

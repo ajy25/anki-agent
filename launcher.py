@@ -55,7 +55,13 @@ def settings_menu():
     return [Menu("Settings", [MenuAction("API key & Anki deck…", open_setup), Menu("AI model", [
         MenuAction(label, partial(select_model, model))
         for model, label in available_models().items()
-    ])])]
+    ]), MenuAction("Tutor settings…", open_tutor_settings)])]
+
+
+def open_tutor_settings():
+    if window:
+        window.evaluate_js("if (window.openTutorSettings) { window.openTutorSettings(); } "
+                           "else { window.location.href = '/?mode=tutor&settings=tutor'; }")
 
 
 def open_setup():

@@ -17,7 +17,7 @@
     </div>
     <label class="model-picker" for="model-select">
       <span>Model</span>
-      <select id="model-select" title="Model for Tutor, AI assist, and Deep search">
+      <select id="model-select" title="Model for Tutor, Organize, AI assist, and Deep search">
         {% for model_id, label in models.items() %}
         <option value="{{ model_id }}"{% if model_id == default_model %} selected{% endif %}>{{ label }}</option>
         {% endfor %}
@@ -34,6 +34,10 @@
       <button class="mode-btn" data-mode="tutor" role="tab" aria-selected="false" title="Multi-turn tutor that grounds its answers in your deck and cites the cards">
         <span class="mode-dot"></span>Tutor
         <span class="mode-sub">cited</span>
+      </button>
+      <button class="mode-btn" data-mode="agent" role="tab" aria-selected="false" title="Move, suspend, or unsuspend cards. You preview every card and confirm before anything changes.">
+        <span class="mode-dot"></span>Organize
+        <span class="mode-sub">cards</span>
       </button>
     </div>
   </header>
@@ -88,6 +92,10 @@
                   title="Copy every result's note ID as an Anki search (nid:1,2,3) — paste into the Anki browser to list them all">
             Copy Anki search
           </button>
+          <button id="move-to-deck" class="copy-all-ids" type="button" hidden
+                  title="Move every result's cards into another Anki deck (preview first; undo available)">
+            Move to deck…
+          </button>
           <span id="result-timing"></span>
         </span>
       </div>
@@ -101,6 +109,39 @@
       <span aria-hidden="true">×</span> Close
     </button>
     <img class="image-viewer-image" alt="" />
+  </dialog>
+
+  <dialog id="move-dialog" class="move-dialog" aria-label="Move cards to a deck"></dialog>
+
+  <dialog id="tutor-settings-dialog" class="tutor-settings-dialog" aria-labelledby="tutor-settings-title">
+    <form id="tutor-settings-form">
+      <div class="tutor-settings-heading">
+        <h2 id="tutor-settings-title">Tutor settings</h2>
+        <button type="button" id="tutor-settings-close" aria-label="Close Tutor settings">Close</button>
+      </div>
+      <label for="tutor-settings-size">Text size</label>
+      <select id="tutor-settings-size">
+        <option value="0.75">Small (75%)</option><option value="1">Default (100%)</option>
+        <option value="1.25">Large (125%)</option><option value="1.5">Extra large (150%)</option>
+      </select>
+      <p class="muted">Text size changes immediately and is remembered on this device.</p>
+      <fieldset id="tutor-prompt-fields" disabled>
+        <label for="tutor-system-prompt">System prompt</label>
+        <p class="muted" id="tutor-prompt-help">Edit the instructions that guide Tutor’s answers. Saved changes apply to your next message; start a new chat for a fresh conversation.</p>
+        <textarea id="tutor-system-prompt" rows="10" maxlength="20000" required aria-describedby="tutor-prompt-help"></textarea>
+        <details>
+          <summary>First-reply instructions</summary>
+          <p class="muted">Added only to the first reply of a new chat. Edit these to change the initial answer format, or leave blank to use only the system prompt.</p>
+          <label class="sr-only" for="tutor-first-turn">First-reply instructions</label>
+          <textarea id="tutor-first-turn" rows="6" maxlength="20000"></textarea>
+        </details>
+        <div class="tutor-settings-actions">
+          <button type="button" id="tutor-prompt-reset">Restore default instructions</button>
+          <button type="submit" id="tutor-prompt-save">Save instructions</button>
+        </div>
+      </fieldset>
+      <p id="tutor-settings-status" role="status" aria-live="polite"></p>
+    </form>
   </dialog>
 
   <script src="{{ url_for('static', filename='marked.min.js') }}"></script>

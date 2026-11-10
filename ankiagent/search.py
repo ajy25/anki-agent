@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -176,16 +177,37 @@ def parse_query(q: str) -> ParsedQuery:
 # Connection
 # ---------------------------------------------------------------------------
 
-_CONN: sqlite3.Connection | None = None
+# One connection per thread. The server handles requests on many threads at
+# once, and sharing a single connection between them (check_same_thread=False)
+# let concurrent queries corrupt SQLite's memory: "database disk image is
+# malformed" errors and hard crashes (SIGSEGV / SIGABRT inside libsqlite3).
+# The index is in WAL mode, so separate connections read concurrently.
+_local = threading.local()
+_generation = 0
 
 
 def get_conn(db_path: Path | None = None) -> sqlite3.Connection:
-    global _CONN
-    if _CONN is None:
-        con = sqlite3.connect(db_path or DB_PATH, check_same_thread=False)
+    path = str(db_path or DB_PATH)
+    con = getattr(_local, "con", None)
+    if con is not None and (_local.generation != _generation or _local.path != path):
+        con.close()
+        con = None
+    if con is None:
+        con = sqlite3.connect(path, timeout=10)
         con.row_factory = sqlite3.Row
-        _CONN = con
-    return _CONN
+        _local.con, _local.generation, _local.path = con, _generation, path
+    return con
+
+
+def reset_conn() -> None:
+    """Make every thread reopen its connection (e.g. after the index is
+    rebuilt or moved). Each thread closes its own stale one on next use."""
+    global _generation
+    _generation += 1
+    con = getattr(_local, "con", None)
+    if con is not None:
+        con.close()
+        _local.con = None
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +482,20 @@ def fast_search(
     return results
 
 
+def notes_by_nids(nids: list[int]) -> dict[int, dict]:
+    """Full notes keyed by Anki note id (for previewing a move/suspend)."""
+    con = get_conn()
+    guid_by_nid: dict[int, str] = {}
+    for i in range(0, len(nids), 900):
+        chunk = [int(n) for n in nids[i : i + 900]]
+        for r in con.execute(
+            f"SELECT nid, guid FROM notes WHERE nid IN ({','.join('?' * len(chunk))})", chunk
+        ):
+            guid_by_nid[int(r["nid"])] = r["guid"]
+    full = _hydrate(con, list(guid_by_nid.values()))
+    return {nid: full[g] for nid, g in guid_by_nid.items() if g in full}
+
+
 def get_note(guid: str) -> dict | None:
     con = get_conn()
     full = _hydrate(con, [guid])
@@ -558,6 +594,90 @@ def find_tags(substring: str, limit: int = 25) -> list[dict]:
         (f"%{esc}%", max(1, min(limit, 60))),
     ).fetchall()
     return [{"tag": r["tag"], "count": int(r["count"])} for r in rows]
+
+
+def tags_with_segment(segment: str) -> list[str]:
+    """Every tag that has `segment` as one whole `::` level (case-insensitive),
+    e.g. "#B&B" -> "#AK_Step1_v12::#B&B::10_GI::01_Anatomy", ..."""
+    s = (segment or "").strip()
+    if not s:
+        return []
+    esc = _like_escape(s)
+    rows = get_conn().execute(
+        "SELECT tag FROM tags WHERE tag LIKE ? ESCAPE '\\' COLLATE NOCASE "
+        "OR tag LIKE ? ESCAPE '\\' COLLATE NOCASE "
+        "OR tag LIKE ? ESCAPE '\\' COLLATE NOCASE OR tag = ? COLLATE NOCASE",
+        (f"%::{esc}::%", f"{esc}::%", f"%::{esc}", s),
+    ).fetchall()
+    return [r["tag"] for r in rows]
+
+
+def tags_in_deck(deck: str) -> set[str]:
+    """Every tag on a note that has a card in `deck` or its subdecks."""
+    deck = (deck or "").strip()
+    if not deck:
+        return set()
+    rows = get_conn().execute(
+        "SELECT DISTINCT nt.tag FROM note_tags nt JOIN note_decks nd ON nd.guid = nt.guid "
+        "WHERE nd.deck = ? OR nd.deck LIKE ? ESCAPE '\\'",
+        (deck, _like_escape(deck) + "::%"),
+    )
+    return {r["tag"] for r in rows}
+
+
+def notes_under_tags(prefixes: Iterable[str], deck: str = "") -> list[dict]:
+    """Every note tagged with one of `prefixes` or anything beneath it (exact
+    `::` levels, so "X::GI" does not also match "X::GI_Extra"), optionally
+    limited to a deck subtree. Unranked, ordered by note id."""
+    prefixes = [p for p in (str(p).strip() for p in prefixes) if p]
+    if not prefixes:
+        return []
+    clauses, params = [], []
+    for p in prefixes:
+        clauses.append("(tag = ? OR tag LIKE ? ESCAPE '\\')")
+        params += [p, _like_escape(p) + "::%"]
+    con = get_conn()
+    guids = [r["guid"] for r in con.execute(
+        f"SELECT DISTINCT guid FROM note_tags WHERE {' OR '.join(clauses)}", params)]
+    deck = (deck or "").strip()
+    if deck and guids:
+        decks = _decks_by_guid(con, guids)
+        guids = [g for g in guids
+                 if any(d == deck or d.startswith(deck + "::") for d in decks.get(g, []))]
+    notes = []
+    for i in range(0, len(guids), 500):
+        notes.extend(_hydrate(con, guids[i:i + 500]).values())
+    return sorted(notes, key=lambda n: n.get("nid") or 0)
+
+
+def tag_children(prefix: str = "", limit: int = 80) -> list[dict]:
+    """Browse the tag tree one level at a time.
+
+    Returns the immediate child levels under `prefix` (a tag path such as
+    "#AK_Step1_v12" or "#AK_Step1_v12::#B&B"; "" = top level) as
+    [{tag, notes}], where `notes` is the number of distinct notes tagged
+    anywhere beneath that child. Lets the AI find resources whose tag names
+    it can't guess (e.g. "Boards and Beyond" is tagged "#B&B").
+    """
+    p = (prefix or "").strip().strip(":")
+    con = get_conn()
+    if p:
+        rows = con.execute(
+            "SELECT guid, tag FROM note_tags WHERE tag LIKE ? ESCAPE '\\' COLLATE NOCASE",
+            (_like_escape(p) + "::%",),
+        )
+        depth = p.count("::") + 1
+    else:
+        rows = con.execute("SELECT guid, tag FROM note_tags")
+        depth = 0
+    notes: dict[str, set[str]] = {}
+    for r in rows:
+        parts = r["tag"].split("::")
+        if len(parts) <= depth:
+            continue
+        notes.setdefault("::".join(parts[: depth + 1]), set()).add(r["guid"])
+    ranked = sorted(notes.items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
+    return [{"tag": t, "notes": len(g)} for t, g in ranked[: max(1, min(limit, 200))]]
 
 
 def sidebar_tags(limit: int = 40) -> list[dict]:
