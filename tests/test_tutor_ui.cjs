@@ -24,7 +24,7 @@ function fixture({ render = false, storage = new Map() } = {}) {
     return nodes.get(selector);
   }
   const context = vm.createContext({
-    document: { querySelector: node }, window: {}, console, AbortController,
+    document: { querySelector: node }, console, AbortController,
     localStorage: {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value),
       removeItem: (key) => storage.delete(key)},
     TextDecoder, setTimeout, clearTimeout,
@@ -49,6 +49,10 @@ function fixture({ render = false, storage = new Map() } = {}) {
       },
     })),
   });
+  // Classic browser scripts share global function bindings with window.
+  // A separate mock window hides accidental function replacement at startup.
+  context.window = context;
+  context.location = {search: ""};
   vm.runInContext(source, context);
   if (!render) vm.runInContext("renderTutorMessages = () => {};", context);
   vm.runInContext('state.mode = "tutor";', context);
@@ -90,6 +94,38 @@ test("Clear chat button clears only the current tab and cancels late replies", a
     assert.deepEqual(f.state().tutorMessages, []);
     assert.equal(f.state().chatStore[mode === "tutor" ? "agent" : "tutor"].length, 1);
     assert.equal(f.node("#tutor-input").value, "");
+  }
+});
+
+test("Clear chat and automatic clearing work after browser startup wiring", async () => {
+  for (const mode of ["tutor", "agent"]) {
+    const storage = new Map();
+    const f = fixture({render:true, storage});
+    // Keep the real boot/render/reset wiring; stub unrelated page/data loading.
+    f.run(`window.location.search = "?mode=${mode}";
+      bindUi = applyModeUi = updatePlaceholder = () => {};
+      loadStats = loadTags = loadDecks = async () => {};`);
+    await f.run("boot()");
+    f.run(`state.chatStore = {
+      tutor: [{role:"user", content:"Tutor message"}],
+      agent: [{role:"user", content:"Organize message"}]
+    }; state.tutorMessages = state.chatStore[state.mode]; setClearChatOnClose(false);`);
+    f.node("#tutor-input").value = "Draft message";
+    const pending = f.send("Pending message");
+    const request = f.requests.find(r => r.url === (mode === "tutor" ? "/api/tutor" : "/api/agent"));
+    f.node("#tutor-clear-chat").listeners.click();
+    assert(request.signal.aborted);
+    request.respond({answer:"Late reply", sources:[]});
+    await pending;
+    assert.deepEqual(f.state().chatStore[mode], []);
+    assert.equal(f.state().chatStore[mode === "tutor" ? "agent" : "tutor"].length, 1);
+    assert.equal(f.node("#tutor-input").value, "");
+    assert.match(f.node("#tutor-messages").innerHTML, /tutor-empty/);
+    const reopened = fixture({storage});
+    reopened.run("restoreChatHistory()");
+    assert.deepEqual(reopened.state().chatStore[mode], []);
+    f.run("setClearChatOnClose(true); window.handleChatWindowClose();");
+    assert.deepEqual(f.state().chatStore, {tutor:[], agent:[]});
   }
 });
 

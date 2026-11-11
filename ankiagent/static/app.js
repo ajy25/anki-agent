@@ -71,8 +71,8 @@ async function boot() {
     renderTutor();
   }
 
-  // Allow the launcher to reset the tutor conversation on window hide.
-  window.resetTutor = () => resetTutor({ all: true });
+  // The launcher applies the history preference on hide. Do not wrap
+  // window.resetTutor: it shares the resetTutor binding in this classic script.
   window.handleChatWindowClose = handleChatWindowClose;
 
   await Promise.all([loadStats(), loadTags(), loadDecks()]);
