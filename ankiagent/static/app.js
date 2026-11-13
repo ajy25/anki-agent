@@ -100,14 +100,15 @@ function setModel(model) {
   select.value = model;
   state.model = model;
   $("#desktop-model-name").textContent = option.textContent;
-  try { localStorage.setItem("ankiagent.model", model); } catch { /* ignore */ }
+  try { localStorage.setItem(`ankiagent.model.${select.dataset.provider || "groq"}`, model); } catch { /* ignore */ }
   return true;
 }
 
 function bindModelPicker() {
   const modelSelect = $("#model-select");
   try {
-    const saved = localStorage.getItem("ankiagent.model");
+    const saved = localStorage.getItem(`ankiagent.model.${modelSelect.dataset.provider || "groq"}`)
+      || localStorage.getItem("ankiagent.model");
     if (Array.from(modelSelect.options).some((option) => option.value === saved)) {
       modelSelect.value = saved;
     }
@@ -498,7 +499,7 @@ async function runAssistedSearch(q) {
   if (!q) {
     cancelSearchRequest();
     hideSearchThinking();
-    renderEmpty("Describe what you want — e.g. \"high-yield cards on a topic\".");
+    renderEmpty("Describe a topic, e.g. cards about drugs that protect gastric ulcers.");
     hideAssistPlan();
     return;
   }
@@ -532,7 +533,7 @@ async function runDeepSearch(q, { confirm = false, viaRefine = false } = {}) {
   if (!q) {
     cancelSearchRequest();
     hideSearchThinking();
-    renderEmpty("Describe what you want — Deep search reads and screens each card.");
+    renderEmpty("Describe what makes a card relevant. Deep search finds possible matches, then screens short excerpts.");
     hideAssistPlan();
     return;
   }
@@ -543,7 +544,7 @@ async function runDeepSearch(q, { confirm = false, viaRefine = false } = {}) {
   }
   const {reqId, controller} = beginSearchThinking();
   renderLoading(
-    confirm ? "Screening every candidate card…" : "Deep search: pooling candidates…"
+    confirm ? "Reviewing candidate card excerpts…" : "Finding possible matches for Deep search…"
   );
   const started = performance.now();
   try {
@@ -700,12 +701,16 @@ function refreshSidebarActive() {
 
 function updatePlaceholder() {
   const input = $("#q");
+  const help = $("#search-mode-help");
   if (state.deep) {
-    input.placeholder = "Deep AI search…  describe exactly what you want screened";
+    input.placeholder = "e.g. Gastric ulcer treatments that protect the mucosa rather than suppress acid";
+    help.textContent = "Deep search finds possible matches, then AI screens short card excerpts for relevance. More AI calls; may take longer.";
   } else if (state.aiAssist) {
-    input.placeholder = "Describe what you want…  e.g. high-yield cards on a topic";
+    input.placeholder = "e.g. Find cards about drugs that protect gastric ulcers";
+    help.textContent = "AI assist turns your request into a keyword-and-tag search. It returns matching cards without screening every result.";
   } else {
     input.placeholder = "Search your deck…  try: keywords  ·  tag:Topic keyword  ·  \"exact phrase\"";
+    help.textContent = "Keyword search matches words and tags in your deck. No AI call.";
   }
 }
 

@@ -81,9 +81,13 @@ def build(output: Path, releases: list) -> None:
         if path.is_file():
             shutil.copy2(path, output / path.name)
     download = select_download(releases)
+    includes_140 = download is not None and tuple(map(int, download["version"].split("."))) >= (1, 4, 0)
     values = {
         "__DOWNLOAD_URL__": download["url"] if download else RELEASES_URL,
         "__DOWNLOAD_LABEL__": "Download for Mac" if download else "View releases",
+        "__DOWNLOAD_STATUS__": f"Version {download['version']} · Apple silicon Mac" if download else "No public installer available yet.",
+        "__SETUP_SUMMARY__": "Add a Groq key, an OpenRouter key, or both, then choose your Anki profile and deck." if includes_140 else "Add your Groq key, then choose your Anki profile and deck.",
+        "__FEATURE_STATUS__": "Available in the current download." if includes_140 else f"Coming in the next release. The features below describe 1.4.0; they are not included in the current {download['version']} download." if download else "Version 1.4.0 is being prepared for release.",
     }
     page = (output / "index.html").read_text()
     for key, value in values.items():

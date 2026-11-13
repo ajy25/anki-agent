@@ -40,7 +40,7 @@ from .ingest import DECK_PATH, ensure_built
 from .media import IMAGE_TYPES, is_media_filename, resolve_media_dir, rewrite_image_sources
 from .parse import DISPLAY_ALLOWED_ATTRS, DISPLAY_ALLOWED_TAGS
 from . import ingest, search
-from .llm_client import available_models, get_model
+from .llm_client import available_models, get_model, model_groups
 
 load_dotenv()
 
@@ -84,7 +84,8 @@ def _present(note: dict) -> dict:
 
 @app.route("/")
 def index():
-    return render_template("index.html", models=available_models(), default_model=get_model())
+    return render_template("index.html", models=available_models(), default_model=get_model(),
+                           model_groups=model_groups())
 
 
 @app.route("/media")

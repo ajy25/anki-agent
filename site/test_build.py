@@ -48,6 +48,20 @@ class SiteBuildTests(unittest.TestCase):
                 self.assertTrue((Path(temporary) / ".nojekyll").exists())
                 self.assertNotIn("__DOWNLOAD_URL__", page)
 
+    def test_new_features_do_not_mislabel_the_existing_download(self):
+        for releases, upcoming in (([release()], True), ([release("1.4.0", draft=True), release()], True),
+                                    ([release("1.4.0")], False)):
+            with self.subTest(upcoming=upcoming), tempfile.TemporaryDirectory() as temporary:
+                site.build(Path(temporary), releases)
+                page = (Path(temporary) / "index.html").read_text()
+                self.assertEqual("Coming in the next release." in page, upcoming)
+                self.assertEqual("Available in the current download." in page, not upcoming)
+                self.assertIn("Version 1.3.1" if upcoming else "Version 1.4.0", page)
+                if upcoming:
+                    self.assertNotIn("/releases/download/v1.4.0/", page)
+                else:
+                    self.assertIn("Add a Groq key, an OpenRouter key, or both", page)
+
     def test_missing_assets_and_anchors_fail_validation(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)

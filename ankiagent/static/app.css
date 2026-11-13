@@ -153,13 +153,6 @@ code {
   outline-offset: 2px;
 }
 .desktop-model-name { display: none; }
-.desktop-mode .model-picker { display: none; }
-.desktop-mode .desktop-model-name {
-  display: inline-block;
-  margin-left: auto;
-  color: var(--text-dim);
-  font-size: 12px;
-}
 
 .mode-toggle {
   display: flex;
@@ -342,6 +335,13 @@ body.mode-tutor .search-thinking { display: none; }
   color: var(--text-faint);
   font-size: 12.5px;
 }
+
+.search-mode-help { margin: 10px 0 4px; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.search-help { margin-bottom: 8px; color: var(--text-dim); font-size: 13px; line-height: 1.6; max-width: 900px; }
+.search-help summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.search-help summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.search-help p { margin: 8px 0; }
+.search-help strong { color: var(--text); }
 
 /* ---------------- layout ---------------- */
 main {

@@ -2,18 +2,42 @@
 
 User-visible changes are recorded here, newest version first.
 
-## Unreleased
+## 1.4.0 — Upcoming preview
+
+Prepared for the next release; not yet published. Changes since 1.3.1:
 
 ### Added
 
-- **Tutor settings:** adjustable text size, editable system and first-reply instructions, and a restore-defaults option. Saved instructions apply to the next Tutor request.
-- **AnkiConnect setup notice:** Organize checks the connection on entry and shows installation steps and a **Check again** button when Anki is unavailable.
-- **Move to deck:** move every card of a result set into another Anki deck (for example, all Boards & Beyond GI cards into a personal GI deck). A preview shows how many cards will move and from where before anything changes.
-- **Organize tab:** ask in plain English to move cards ("put all Boards and Beyond GI cards in my GI deck") or to suspend/unsuspend them ("in my GI deck, suspend everything except GERD"). It finds the cards, matches your deck, and shows a **Review** button.
-- **Card previews:** before you confirm, the preview lists every affected card with its images, in compact rows that expand to the full card. Suspends list the cards kept and the cards suspended.
-- The **Tutor** tab is unchanged and stays read-only.
-- **Undo:** every move or suspend is logged, and **Recent changes** can reverse it.
-- Moves go through the AnkiConnect add-on, so Anki must be open with AnkiConnect installed.
+- **OpenRouter:** GPT-6 Luna, Gemini 3.8 Flash, and Gemini 3.5 Flash Lite, alongside the existing Groq models. Streaming, card citations, and search work with either service.
+- **One or both API keys:** separate Groq and OpenRouter fields in Setup, with individual key tests. The model menu groups the choices available through your saved keys and routes each request to the selected model's service.
+- **Organize:** move, suspend, or unsuspend cards through AnkiConnect. Review the affected cards and their images before confirming, and use Recent changes to undo an action.
+- **Move search results:** move the current result set to another deck with a preview and undo.
+- **Tutor settings:** adjustable text size, editable system and first-reply instructions, and a restore-defaults option.
+- **Chat history preference:** choose whether closing or reopening the app clears conversations; the global shortcut respects this preference.
+- **AnkiConnect guidance:** Organize checks its connection and shows installation instructions and a Check again button when needed.
+- **Search guidance:** mode-specific explanations and an expandable comparison in the app, plus a guide explaining AI assist, Deep search, examples, screening limits, and API usage.
+- Contributor credits for Andrew Yang, Saajan Patel, and Kevin Zhang in the MIT license and root contributors file.
+
+### Changed
+
+- API keys are now saved in an app-managed, plaintext `.env` file restricted to your Mac account, outside the app bundle. App launches no longer request Keychain access, and updates preserve saved keys.
+- The model dropdown is visible in the desktop app. The native AI model menu focuses that dropdown.
+- Setup and study documentation now follows medical-student workflows, with provider setup, model costs, search explanations, and troubleshooting.
+- Built-in examples use generic deck topics. Names and tags from your own deck still appear normally.
+- The website keeps its simple demo/download layout and adds release status, provider choices, search guidance, and contributor credits.
+
+### Fixed
+
+- Clear chat failing after startup because its handler called itself; clearing also cancels pending replies so they cannot restore old messages.
+- Tutor replies failing repeatedly when a forced tool call was inappropriate, such as for a greeting. The app retries that validation failure with a relaxed tool choice.
+- Organize operations now verify the active Anki profile and require a fresh, single-use preview for the exact reviewed cards. Undo records remain tied to the original collection, and uncertain outcomes remain visible for recovery.
+- OpenRouter tool conversations preserve Gemini reasoning/signature metadata between searches and answers. Concurrent requests keep provider credentials and model options separate.
+
+### Upgrade notes
+
+- From the Keychain-based 1.3.1 preview, paste your Groq key into Setup once if prompted. You can also add an OpenRouter key. Existing local `.env` keys are retained.
+- The Mac preview remains for Apple silicon and is not notarized by Apple. See the [Mac setup guide](docs/MAC_SETUP.md) for installation.
+- The published download remains 1.3.1 until the 1.4.0 release is published.
 
 ## [1.3.1 (preview)](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1) — 2026-11-07
 

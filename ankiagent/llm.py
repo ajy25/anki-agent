@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from typing import Iterable
 
 from . import search
-from .llm_client import MODEL, get_client, get_model, reasoning_kwargs, reasoning_output_kwargs
+from .llm_client import MODEL, get_client, get_model, get_provider, request_kwargs, reasoning_kwargs, reasoning_output_kwargs
 
 RERANK_TIMEOUT = 20.0
 
@@ -82,11 +82,12 @@ def _human_wait(seconds: float) -> str:
 
 
 def _rate_limit_message(error: Exception, model: str, wait: float | None) -> str:
+    provider = {"groq": "Groq", "openrouter": "OpenRouter", "openai": "OpenAI"}[get_provider(model)]
     when = f" Try again in about {_human_wait(wait)}," if wait else " Try again later,"
     if _DAILY_RE.search(str(error)):
-        what = f"Groq's daily token limit for {model} is used up."
+        what = f"{provider}'s daily token limit for {model} is used up."
     else:
-        what = f"Groq's rate limit for {model} was reached."
+        what = f"{provider}'s rate limit for {model} was reached."
     return what + when + " or pick a different model in the model picker."
 
 
@@ -98,6 +99,7 @@ def _create(client, *, cancelled=None, on_wait=None, **kwargs):
     we wait and resend, telling `on_wait` so the UI can show it. A daily
     cap or a long wait raises RateLimitExhausted at once instead.
     """
+    kwargs = request_kwargs(kwargs)
     transient_left = TRANSIENT_RETRIES
     attempt = 0
     while True:
@@ -134,9 +136,10 @@ def _sleep(seconds: float, cancelled=None) -> None:
         raise TutorCancelled()
 
 
-def _wait_step(seconds: float) -> dict:
+def _wait_step(seconds: float, model: str | None = None) -> dict:
+    provider = {"groq": "Groq", "openrouter": "OpenRouter", "openai": "OpenAI"}[get_provider(model)]
     return {"type": "tool",
-            "text": f"Groq rate limit reached; waiting {_human_wait(seconds)} before continuing…"}
+            "text": f"{provider} rate limit reached; waiting {_human_wait(seconds)} before continuing…"}
 
 
 def _chat_completion(client, *, emit=None, cancelled=None, iteration=1, **kwargs):
@@ -146,17 +149,23 @@ def _chat_completion(client, *, emit=None, cancelled=None, iteration=1, **kwargs
     _check_cancelled(cancelled)
     emit({"event": "round", "iteration": iteration})
     stream = _create(client, cancelled=cancelled, stream=True,
-                     on_wait=lambda s: emit({"event": "tool", "step": _wait_step(s)}), **kwargs)
+                     on_wait=lambda s: emit({"event": "tool", "step": _wait_step(s, kwargs.get("model"))}), **kwargs)
     content, reasoning, tools = [], [], {}
+    reasoning_details = []
     finish_reason = None
     try:
         for chunk in stream:
             _check_cancelled(cancelled)
+            if getattr(chunk, "error", None):
+                # OpenRouter can report an error inside an already-open stream.
+                raise RuntimeError("The model provider interrupted the response.")
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
             delta = choice.delta
-            thought = getattr(delta, "reasoning", None)
+            details = getattr(delta, "reasoning_details", None) or []
+            _merge_reasoning_details(reasoning_details, details)
+            thought = _reasoning_text(delta)
             if isinstance(thought, str) and thought:
                 reasoning.append(thought)
                 emit({"event": "reasoning_delta", "text": thought, "iteration": iteration})
@@ -172,6 +181,9 @@ def _chat_completion(client, *, emit=None, cancelled=None, iteration=1, **kwargs
                 tool = tools.setdefault(part.index, {"id": "", "name": "", "arguments": ""})
                 tool["id"] += getattr(part, "id", None) or ""
                 function = getattr(part, "function", None)
+                extra = getattr(part, "extra_content", None)
+                if extra:
+                    tool["extra_content"] = extra
                 if function:
                     tool["name"] += getattr(function, "name", None) or ""
                     tool["arguments"] += getattr(function, "arguments", None) or ""
@@ -186,17 +198,59 @@ def _chat_completion(client, *, emit=None, cancelled=None, iteration=1, **kwargs
         if close:
             close()
     message = SimpleNamespace(
-        content="".join(content), reasoning="".join(reasoning),
-        tool_calls=[SimpleNamespace(id=tool["id"], function=SimpleNamespace(
+        content="".join(content), reasoning="".join(reasoning), reasoning_details=reasoning_details,
+        tool_calls=[SimpleNamespace(id=tool["id"], extra_content=tool.get("extra_content"), function=SimpleNamespace(
             name=tool["name"], arguments=tool["arguments"],
         )) for _, tool in sorted(tools.items())],
     )
     return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish_reason)])
 
 
+def _reasoning_text(message) -> str:
+    text = getattr(message, "reasoning", None)
+    if isinstance(text, str) and text:
+        return text
+    # Only readable text/summary belongs in the panel, never opaque signatures.
+    return "".join(d.get("text") or d.get("summary") or ""
+                   for d in (getattr(message, "reasoning_details", None) or [])
+                   if isinstance(d, dict) and d.get("type") in ("reasoning.text", "reasoning.summary"))
+
+
+def _merge_reasoning_details(target: list, chunks: list) -> None:
+    """Preserve provider signatures across tool rounds, including streamed pieces."""
+    for part in chunks:
+        if not isinstance(part, dict):
+            continue
+        index = part.get("index")
+        existing = next((d for d in target if index is not None and d.get("index") == index), None)
+        if existing is None:
+            target.append(dict(part))
+            continue
+        for key, value in part.items():
+            if value is None:
+                continue
+            if key in ("text", "summary", "data", "signature") and isinstance(value, str):
+                existing[key] = (existing.get(key) or "") + value
+            else:
+                existing[key] = value
+
+
+def _tool_message(message, tool_calls, model: str) -> dict:
+    """Replay tool calls with the provider's unmodified reasoning/signature data."""
+    result = {"role": "assistant", "content": message.content or "", "tool_calls": [
+        {"id": tc.id, "type": "function",
+         "function": {"name": tc.function.name, "arguments": tc.function.arguments or "{}"},
+         **({"extra_content": tc.extra_content} if getattr(tc, "extra_content", None) else {})}
+        for tc in tool_calls
+    ]}
+    if get_provider(model) == "openrouter" and getattr(message, "reasoning_details", None):
+        result["reasoning_details"] = message.reasoning_details
+    return result
+
+
 def _record_reasoning(message, steps: list[dict], iteration: int) -> None:
     """Keep provider-returned reasoning as display data, outside chat history."""
-    text = getattr(message, "reasoning", None)
+    text = _reasoning_text(message)
     if isinstance(text, str) and text.strip():
         steps.append({"type": "reasoning", "text": text.strip(), "iteration": iteration})
 
@@ -844,7 +898,7 @@ class AgentSession:
         if not self.question.strip():
             return "Ask a question.", [], debug
 
-        client = get_client()
+        client = get_client(self.model)
         system_prompt = self.system_prompt
         if self.turn_directive:
             system_prompt += f"\n\nInstructions for this reply only:\n{self.turn_directive}"
@@ -929,21 +983,7 @@ class AgentSession:
                 final_answer = (msg.content or "").strip()
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments or "{}",
-                        },
-                    }
-                    for tc in tool_calls
-                ],
-            })
+            messages.append(_tool_message(msg, tool_calls, self.model))
 
             for tc in tool_calls:
                 _check_cancelled(cancelled)
@@ -1729,7 +1769,7 @@ def _run_planner(
     `iterations` and each `find_tags` lookup into `debug`.
     """
     model = get_model(model)
-    client = get_client()
+    client = get_client(model)
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
@@ -1770,21 +1810,7 @@ def _run_planner(
             plan = _loose_json_obj(msg.content or "")
             break
 
-        messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments or "{}",
-                    },
-                }
-                for tc in tool_calls
-            ],
-        })
+        messages.append(_tool_message(msg, tool_calls, model))
         for tc in tool_calls:
             _check_cancelled(cancelled)
             try:
@@ -2184,7 +2210,7 @@ def _screen_batch(
     try:
         _check_cancelled(cancelled)
         resp = _search_completion(
-            get_client(), thinking, phase="screen", batch=batch_number,
+            get_client(model), thinking, phase="screen", batch=batch_number,
             on_event=on_event, cancelled=cancelled,
             model=model,
             messages=[

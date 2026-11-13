@@ -16,10 +16,14 @@
       <span class="sub" id="stats"></span>
     </div>
     <label class="model-picker" for="model-select">
-      <span>Model</span>
-      <select id="model-select" title="Model for Tutor, Organize, AI assist, and Deep search">
-        {% for model_id, label in models.items() %}
+      <span>AI model</span>
+      <select id="model-select" data-provider="all" title="Model for Tutor, Organize, AI assist, and Deep search">
+        {% for provider_label, choices in model_groups.items() %}
+        <optgroup label="{{ provider_label }}">
+        {% for model_id, label in choices.items() %}
         <option value="{{ model_id }}"{% if model_id == default_model %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+        </optgroup>
         {% endfor %}
       </select>
     </label>
@@ -52,17 +56,26 @@
         spellcheck="false"
       />
       <label class="ai-assist-toggle" id="ai-assist-label"
-             title="Let the AI turn a plain-English request into a tag/keyword search (e.g. 'high-yield cards on a topic')">
-        <input type="checkbox" id="ai-assist" />
+             title="Describe a topic. AI looks up deck tags and tries keywords, then returns cards matching the search it builds.">
+        <input type="checkbox" id="ai-assist" aria-describedby="search-mode-help" />
         <span>AI assist</span>
       </label>
       <label class="ai-assist-toggle" id="deep-label"
-             title="Deep AI search: pool candidates, then read and screen each card for a precise match. Asks you to narrow broad searches first (slower, more thorough).">
-        <input type="checkbox" id="deep-search" />
-        <span>Deep</span>
+             title="AI finds possible matches, then reviews short card excerpts and keeps those it judges relevant. Uses more AI calls than AI assist.">
+        <input type="checkbox" id="deep-search" aria-describedby="search-mode-help" />
+        <span>Deep search</span>
       </label>
       <button type="submit">Search</button>
     </form>
+    <p id="search-mode-help" class="search-mode-help" aria-live="polite">Keyword search matches words and tags in your deck. No AI call.</p>
+    <details class="search-help">
+      <summary>How do the search options differ?</summary>
+      <p><strong>Keyword search:</strong> leave both options off when you know a term or tag, such as <code>sucralfate</code>. The app searches locally.</p>
+      <p><strong>AI assist:</strong> describe what you want, such as “cards about drugs that protect gastric ulcers.” AI explores your deck's tags and tries keywords, then builds a search. Results match that search; they are not individually screened for relevance.</p>
+      <p><strong>Deep search:</strong> use a more specific request, such as “gastric ulcer treatments that protect the mucosa rather than suppress acid.” AI first finds possible matches, then reviews short card excerpts and keeps those it judges relevant, with a brief reason for each.</p>
+      <p>Deep search can take longer and use more API credits. For more than 120 candidates, you can narrow the request or continue; at most 400 candidates are reviewed per search. It can still miss relevant cards.</p>
+      <p>Choose one option at a time. Both AI options use your selected model. Expand <strong>Thinking</strong> in the results to inspect search activity and any reasoning text the model returns. Use <strong>Tutor</strong> when you want an explanation with card citations.</p>
+    </details>
     <div id="deck-pill" class="deck-pill" hidden></div>
     <div id="active-tags" class="active-tags"></div>
     <div id="assist-plan" class="assist-plan" hidden></div>

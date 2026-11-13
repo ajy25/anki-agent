@@ -39,6 +39,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       GROQ_API_KEY: ''
       OPENAI_API_KEY: ''
+      OPENROUTER_API_KEY: ''
       DECK_PATH: /unused/collection.anki2
       DECK_NAME: ''
     steps:
@@ -68,7 +69,7 @@ jobs:
         run: |
           node --check ankiagent/static/app.js
           node --check ankiagent/static/setup.js
-          node --test tests/test_tutor_ui.cjs
+          node --test tests/test_*_ui.cjs
 
   package:
     name: Mac installer

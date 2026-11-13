@@ -9,7 +9,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 SMOKE_CHECKS = ("ok", "setup", "native_webview_module", "headless", "indexing",
-                "deck_switching", "source_read_only")
+                "deck_switching", "source_read_only", "openrouter")
 
 
 def read_version(path: Path = ROOT / "VERSION") -> str:

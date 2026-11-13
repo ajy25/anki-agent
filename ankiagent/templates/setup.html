@@ -11,17 +11,27 @@
   <main class="setup-shell">
     <header class="pywebview-drag-region"><a class="brand" href="/"><span>Ω</span> Anki Agent</a><span class="local-label">Made for your own deck</span></header>
     <h1>Set up Anki Agent</h1>
-    <p class="intro">Add your API key, choose your Anki profile, and pick a deck.</p>
+    <p class="intro">Connect an AI service, choose your Anki profile, and pick a deck.</p>
     <div id="status" role="status" aria-live="polite" hidden></div>
     <form id="setup-form">
-      <fieldset id="setup-fields">
+      <fieldset id="setup-fields" disabled>
         <section class="setup-card">
           <div class="step">1</div><div class="card-content">
-            <label for="api-key">Connect Groq</label>
-            <p>Your key connects Tutor, Organize, and AI search. <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Create a Groq API key ↗</a></p>
-            <div class="input-row"><input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your gsk_… API key" aria-describedby="key-help"><button id="show-key" type="button" aria-label="Show API key">Show</button><button id="test-key" type="button">Test key</button></div>
-            <small id="key-help">Saved in a local .env file managed by Anki Agent, readable only by your Mac account. The key is stored as plain text and is never included in the app download.</small>
-            <div id="key-status" class="field-status" role="status"></div>
+            <h2>Connect your AI services</h2>
+            <p>Add a key for Groq, OpenRouter, or both. Your saved keys determine which models appear in the app.</p>
+            {% for provider, info in providers.items() %}
+            <div class="provider-key">
+              <label for="{{ provider }}-key">{{ info.label }} API key</label>
+              <a href="{{ info.keys_url }}" target="_blank" rel="noopener noreferrer">Get {{ "an" if provider == "openrouter" else "a" }} {{ info.label }} key ↗</a>
+              <div class="input-row">
+                <input id="{{ provider }}-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional — paste your {{ info.prefix }}… key" aria-describedby="key-help {{ provider }}-status">
+                <button id="{{ provider }}-show" type="button" aria-label="Show {{ info.label }} API key">Show</button>
+                <button id="{{ provider }}-test" type="button">Test {{ info.label }} key</button>
+              </div>
+              <div id="{{ provider }}-status" class="field-status" role="status"></div>
+            </div>
+            {% endfor %}
+            <small id="key-help">Add at least one key. Leave a saved key's field blank to keep it. Keys are stored as plain text in a local .env file restricted to your Mac account.</small>
           </div>
         </section>
         <section class="setup-card">
@@ -46,7 +56,7 @@
         <div class="actions"><button id="save" class="primary" type="submit">Save &amp; open deck</button><a id="back" href="/?mode=tutor" hidden>Back to app</a></div>
       </fieldset>
     </form>
-    <footer>Your Anki files stay read-only. AI requests send relevant card text to Groq.</footer>
+    <footer>Your Anki files stay read-only. AI requests send relevant card text to your selected AI provider. OpenRouter routes requests to its model providers.</footer>
   </main>
   <script src="{{ url_for('static', filename='setup.js') }}"></script>
 </body></html>

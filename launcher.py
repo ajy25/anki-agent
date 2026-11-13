@@ -4,7 +4,6 @@ The bundled app needs no Python or environment file. Developers can run
 `python launcher.py`; their legacy .env settings remain available.
 """
 
-from functools import partial
 import json
 import logging
 import os
@@ -21,7 +20,7 @@ if not getattr(sys, "frozen", False):
     load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from ankiagent.desktop import DesktopManager, create_desktop_app
-from ankiagent.llm_client import available_models, get_model
+from ankiagent.llm_client import get_model
 from ankiagent.hotkeys import NativeHotkey
 
 load_dotenv()
@@ -50,11 +49,17 @@ def select_model(model: str):
         window.evaluate_js(f"window.setModel({json.dumps(model)})")
 
 
+def open_model_picker():
+    if window:
+        window.evaluate_js("document.getElementById('model-select')?.focus();")
+
+
 def settings_menu():
-    return [Menu("Settings", [MenuAction("API key & Anki deck…", open_setup), Menu("AI model", [
-        MenuAction(label, partial(select_model, model))
-        for model, label in available_models().items()
-    ]), MenuAction("Tutor settings…", open_tutor_settings)])]
+    # Provider changes reload the web picker. A static native submenu would
+    # retain the previous provider's models until restarting the whole app.
+    return [Menu("Settings", [MenuAction("API key & Anki deck…", open_setup),
+        MenuAction("AI model…", open_model_picker),
+        MenuAction("Tutor settings…", open_tutor_settings)])]
 
 
 def open_tutor_settings():

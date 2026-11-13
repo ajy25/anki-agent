@@ -30,18 +30,15 @@ class DesktopSettingsTests(unittest.TestCase):
                 window.hide.assert_called_once()
                 self.assertFalse(launcher.visible)
 
-    def test_native_actions_select_models_through_the_ui(self):
-        with patch.dict(os.environ, {"LLM_PROVIDER": "groq", "LLM_MODEL": "openai/gpt-oss-120b"}):
-            settings, = launcher.settings_menu()
+    def test_native_model_action_focuses_current_provider_picker(self):
+        settings, = launcher.settings_menu()
         self.assertEqual(settings.title, "Settings")
         self.assertEqual(settings.items[0].title, "API key & Anki deck…")
-        models = settings.items[1]
-        self.assertEqual(models.title, "AI model")
-        self.assertEqual([action.title for action in models.items], ["GPT-OSS 120B", "Qwen 3.8 27B"])
+        action = settings.items[1]
+        self.assertEqual(action.title, "AI model…")
         with patch.object(launcher, "window", Mock()) as window:
-            for action, model in zip(models.items, ("openai/gpt-oss-120b", "qwen/qwen3.8-27b")):
-                action.function()
-                window.evaluate_js.assert_called_with(f"window.setModel({json.dumps(model)})")
+            action.function()
+        window.evaluate_js.assert_called_once_with("document.getElementById('model-select')?.focus();")
 
     def test_invalid_selection_never_reaches_the_window(self):
         with patch.object(launcher, "window", Mock()) as window:

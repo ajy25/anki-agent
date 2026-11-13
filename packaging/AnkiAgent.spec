@@ -8,7 +8,7 @@ root = Path(SPECPATH).parent
 identity = os.environ.get("MACOS_CODESIGN_IDENTITY") or None
 arch = os.environ.get("ANKIAGENT_ARCH") or platform.machine()
 notices = [(str(root / "LICENSE"), ".")]
-for package in ("flask", "groq", "python-dotenv", "bleach", "pywebview", "pyobjc-core"):
+for package in ("flask", "groq", "openai", "python-dotenv", "bleach", "pywebview", "pyobjc-core"):
     notices.extend(copy_metadata(package))
 analysis = Analysis([str(root / "desktop_entry.py")], pathex=[str(root)], binaries=[],
     datas=[(str(root / "ankiagent" / "templates"), "ankiagent/templates"),
@@ -16,7 +16,7 @@ analysis = Analysis([str(root / "desktop_entry.py")], pathex=[str(root)], binari
     hiddenimports=["ankiagent.app", "ankiagent.ingest", "ankiagent.llm", "ankiagent.search",
                    "webview.platforms.cocoa", "ankiagent.hotkeys"],
     hookspath=[], hooksconfig={}, runtime_hooks=[],
-    excludes=["openai", "pynput", "PyQt5", "PyQt6", "PySide2", "PySide6", "gi", "wx", "tkinter",
+    excludes=["pynput", "PyQt5", "PyQt6", "PySide2", "PySide6", "gi", "wx", "tkinter",
               "torch", "transformers", "numpy", "pandas", "matplotlib", "scipy", "IPython", "pytest"],
     noarchive=False)
 pyz = PYZ(analysis.pure)

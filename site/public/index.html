@@ -3,15 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Anki Agent for Mac. Watch the demo and download the app.">
+  <meta name="description" content="Search your Anki deck, study with cited answers, and organize cards. Download Anki Agent for Mac.">
   <title>Anki Agent</title>
   <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=minimal">
+  <link rel="stylesheet" href="style.css?v=1.4">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header>
     <div class="title"><img src="icon.svg" alt="" width="38" height="38"><h1>Anki Agent</h1></div>
+    <p class="intro">Find cards, ask questions with citations, and organize your study deck.</p>
     <p class="provider">We use <a href="https://console.groq.com/">Groq</a> for its fast inference.</p>
   </header>
 
@@ -22,16 +23,38 @@
         <track kind="captions" src="demo.vtt?v=citations" srclang="en" label="Walkthrough captions" default>
         <a href="demo.mp4?v=citations">Download the demo video</a>.
       </video>
+      <p class="caption">Demo: version 1.3.1</p>
     </section>
     <section id="download" aria-label="Download">
       <a class="download-link" href="__DOWNLOAD_URL__">__DOWNLOAD_LABEL__</a>
+      <p class="download-status">__DOWNLOAD_STATUS__</p>
+      <p>Open the .dmg and drag Anki Agent into Applications. __SETUP_SUMMARY__ <a href="https://github.com/ajy25/anki-agent/blob/main/docs/MAC_SETUP.md">Setup and troubleshooting</a>.</p>
+    </section>
+    <section id="updates" aria-labelledby="updates-title">
+      <h2 id="updates-title">What’s new in 1.4.0</h2>
+      <p class="release-status">__FEATURE_STATUS__</p>
+      <ul>
+        <li><strong>Groq, OpenRouter, or both.</strong> Save either key or both; the model menu shows the choices you can use. <a href="https://openrouter.ai/">OpenRouter</a> adds GPT-6 Luna, Gemini 3.8 Flash, and Gemini 3.5 Flash Lite.</li>
+        <li><strong>Organize your cards.</strong> Preview moves, suspends, and unsuspends before confirming; undo them through Recent changes. Requires AnkiConnect.</li>
+        <li><strong>Chat controls.</strong> Clear chat, choose whether to keep history on close, and adjust tutor instructions and text size. Keys are saved locally without Keychain prompts.</li>
+      </ul>
+      <details>
+        <summary>How the search options work</summary>
+        <p><strong>Keyword search:</strong> matches words and tags locally, without an AI call. Start here when you know a term, such as <code>sucralfate</code>.</p>
+        <p><strong>AI assist:</strong> describe a topic. AI explores deck tags and tries keywords, then returns cards matching the search it builds.</p>
+        <p><strong>Deep search:</strong> AI finds possible matches, screens short card excerpts for relevance, and gives a reason for each card kept. It uses more AI calls and may take longer. You can narrow broad searches; at most 400 candidates are reviewed per search.</p>
+        <p>Use <strong>Tutor</strong> for an explanation with card citations. <a href="https://github.com/ajy25/anki-agent/blob/main/docs/SEARCH.md">Read the search guide</a>.</p>
+      </details>
     </section>
   </main>
 
   <footer aria-label="Project links">
     <a href="https://github.com/ajy25/anki-agent/blob/main/docs/MAC_SETUP.md">Setup guide</a>
     <a href="https://github.com/ajy25/anki-agent/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/ajy25/anki-agent/blob/main/docs/OPENROUTER.md">OpenRouter guide</a>
     <a href="https://github.com/ajy25/anki-agent">GitHub</a>
+    <a href="https://github.com/ajy25/anki-agent/blob/main/LICENSE">MIT license</a>
+    <p class="credits"><a href="https://github.com/ajy25/anki-agent/blob/main/CONTRIBUTORS.md">Contributors</a>: Andrew Yang, Saajan Patel, and Kevin Zhang.</p>
   </footer>
 </body>
 </html>

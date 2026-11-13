@@ -54,7 +54,7 @@ def main():
         run("/usr/bin/codesign", "--verify", "--deep", "--strict", app)
         report = work / "smoke.json"
         environment = {name: value for name, value in os.environ.items()
-                       if name not in ("DECK_PATH", "DECK_NAME", "GROQ_API_KEY", "OPENAI_API_KEY", "PYTHONPATH")}
+                       if name not in ("DECK_PATH", "DECK_NAME", "GROQ_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "PYTHONPATH")}
         environment["ANKIAGENT_DATA_DIR"] = str(work / "fresh-user")
         run(app / "Contents" / "MacOS" / "Anki Agent", "--smoke-test", "--report", report,
             cwd=work, env=environment)
@@ -77,11 +77,11 @@ def main():
             "Welcome to Anki Agent\n\n"
             "1. Drag Anki Agent.app onto Applications.\n"
             "2. Open Anki Agent from Applications.\n"
-            "3. In Setup, create and paste your own Groq API key, then click Test key.\n"
+            "3. In Setup, add a Groq key, an OpenRouter key, or both, and test each key.\n"
             "4. Choose your Anki profile and deck, then click Save & open deck.\n"
             "5. Leave the window open while your deck is prepared. The tutor opens when ready.\n\n"
             "Anki must already be installed with your cards on this Mac.\n"
-            "You do not need Python, Terminal, or an .env file.\n\n"
+            "Choose a model from your connected services in the app.\n\n"
             "Full setup guide and troubleshooting:\n"
             "https://github.com/ajy25/anki-agent/blob/main/docs/MAC_SETUP.md\n\n"
             + ("This build is signed and notarized.\n" if notary else

@@ -707,3 +707,48 @@ test("Uncertain history is visibly distinguished from confirmed changes", async 
   assert.match(f.node("#move-history-list").innerHTML, /Outcome unconfirmed/);
   assert.match(f.node("#move-history-list").innerHTML, /data-id="recover"/);
 });
+
+test("Model choices persist separately for Groq and OpenRouter", () => {
+  const storage = new Map([['ankiagent.model', 'qwen/qwen3.8-27b']]);
+  const f = fixture({storage});
+  f.run('window.addEventListener = () => {};');
+  const select = f.node('#model-select');
+  select.dataset.provider = 'groq';
+  select.options = [{value:'openai/gpt-oss-120b', textContent:'GPT OSS'}, {value:'qwen/qwen3.8-27b', textContent:'Qwen'}];
+  select.value = 'openai/gpt-oss-120b';
+  f.run('bindModelPicker()');
+  assert.equal(f.state().model, 'qwen/qwen3.8-27b');
+  select.dataset.provider = 'openrouter';
+  select.options = [{value:'openai/gpt-6-luna', textContent:'Luna'}, {value:'google/gemini-3.8-flash', textContent:'Gemini'}];
+  select.value = 'openai/gpt-6-luna';
+  f.run('bindModelPicker()');
+  assert.equal(f.state().model, 'openai/gpt-6-luna');
+  f.run('setModel("google/gemini-3.8-flash")');
+  assert.equal(storage.get('ankiagent.model.groq'), 'qwen/qwen3.8-27b');
+  assert.equal(storage.get('ankiagent.model.openrouter'), 'google/gemini-3.8-flash');
+  select.value = 'openai/gpt-6-luna';
+  f.run('bindModelPicker()');
+  assert.equal(f.state().model, 'google/gemini-3.8-flash');
+  assert.equal(f.run('setModel("qwen/qwen3.8-27b")'), false);
+});
+
+
+test("Combined model picker remembers the selected provider's model and rejects removed choices", () => {
+  const storage = new Map();
+  const f = fixture({storage});
+  f.run('window.addEventListener = () => {};');
+  const select = f.node('#model-select');
+  select.dataset.provider = 'all';
+  select.options = [{value:'openai/gpt-oss-120b',textContent:'GPT OSS'}, {value:'openai/gpt-6-luna',textContent:'Luna'}];
+  select.value = 'openai/gpt-oss-120b';
+  f.run('bindModelPicker()');
+  f.run('setModel("openai/gpt-6-luna")');
+  select.value = 'openai/gpt-oss-120b';
+  f.run('bindModelPicker()');
+  assert.equal(f.state().model, 'openai/gpt-6-luna');
+  select.options = [select.options[0]];
+  select.value = 'openai/gpt-oss-120b';
+  f.run('bindModelPicker()');
+  assert.equal(f.state().model, 'openai/gpt-oss-120b');
+  assert.equal(f.run('setModel("google/gemini-2.5-flash-lite")'), false);
+});

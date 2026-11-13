@@ -1,6 +1,6 @@
 flask>=3.0
 groq>=0.11
-openai>=1.40
+openai>=3.50,<4
 python-dotenv>=1.0
 bleach>=6.1
 pywebview>=6.1

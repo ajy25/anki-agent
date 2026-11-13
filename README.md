@@ -2,59 +2,68 @@
 
 [![CI](https://github.com/ajy25/anki-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ajy25/anki-agent/actions/workflows/ci.yml)
 
-Search your Anki cards and ask a tutor questions with links back to your deck.
+Find relevant cards, ask questions about what you are studying, and follow the tutor's citations back to your Anki deck.
 
-**[Visit the website](https://ajy25.github.io/anki-agent/)** for the app demo, download, and setup guide.
+**[Watch the demo and download the app](https://ajy25.github.io/anki-agent/)** · **[Mac setup guide](docs/MAC_SETUP.md)**
 
-## Install on a Mac
+## Get started
 
-**[Read the step-by-step Mac setup guide](docs/MAC_SETUP.md)** — written for people who do not code.
+You need **Anki on your Mac**, a synced deck, an internet connection, and an API key from **[Groq](https://console.groq.com/keys)** or **[OpenRouter](https://openrouter.ai/settings/keys)**. An API key connects the app to an AI service using your own account.
 
-The Mac app includes everything it needs to run. You do not need Python, Terminal, or an `.env` file.
+1. **Install Anki Agent.** Download the `.dmg` from [Releases](https://github.com/ajy25/anki-agent/releases), open it, and drag **Anki Agent** into **Applications**. The Mac download supports Apple silicon.
+2. **Connect an AI service.** In Setup, paste a key into **Groq API key**, **OpenRouter API key**, or both. Click the corresponding **Test key** button. You only need one key to start.
+3. **Choose your cards.** Select your Anki profile and deck. Choosing a parent deck includes its subdecks.
+4. **Save & open deck.** Leave the window open while the app prepares your cards.
+5. **Choose a model and ask a question.** The **AI model** menu shows models from the services you have connected. With both keys saved, you can switch between Groq and OpenRouter directly in this menu.
 
-You will need:
+**Download status:** the published [1.3.1 installer](https://github.com/ajy25/anki-agent/releases/download/v1.3.1/Anki-Agent-1.3.1-macOS-arm64-preview.dmg) supports Groq. The upcoming **1.4.0** includes the two-key setup and features described here. It is available in the current source and updated local builds, ahead of the next public download.
 
-- **Anki on this Mac**, with the cards you want to study already downloaded or synced.
-- **An internet connection** for the tutor and AI search.
-- **Your own Groq API key**, created through [Groq](https://console.groq.com/keys). The guide explains how to do this.
+If macOS blocks the app or your deck is missing, follow the [Mac setup guide](docs/MAC_SETUP.md).
 
-### 1. Download and open
+## Study with your deck
 
-Open the [Downloads / Releases page](https://github.com/ajy25/anki-agent/releases). Under **Assets**, download the **Apple silicon (`arm64`) `.dmg`**. The current preview supports Apple silicon Macs only. Avoid **Source code (zip)** and **Source code (tar.gz)**; those are for developers.
+- **Search:** use keywords when you know a term. **AI assist** turns a description into a keyword-and-tag search. **Deep search** adds an AI review of short excerpts from the cards it finds, keeping those judged relevant. [See how the search options work](docs/SEARCH.md).
+- **Tutor:** ask a question about your cards, then ask follow-up questions in the same conversation. Replies appear as they are generated. Click a citation such as **[1]** to inspect the supporting card.
+- **Thinking:** expand this panel to see search activity and any reasoning text returned by the model. Availability varies by model.
+- **Organize:** request a change such as “move my cardiology cards to my Cardiology deck.” Review the affected cards and confirm before anything changes. Moves and suspend/unsuspend actions require Anki to be open with [AnkiConnect](https://ankiweb.net/shared/info/2055492159) installed. Changes can be undone.
+- **Clear chat:** use **Clear chat** in Tutor or Organize. Tutor settings also let you clear chat history when the app closes or opens.
+- **Adjust your experience:** change text size or tutor instructions in Tutor settings. Return to **Setup** to add or replace a key or choose another deck. Leave a saved key's field blank to keep it.
 
-**Mac preview 1.3.1:** [Download the Mac installer (.dmg)](https://github.com/ajy25/anki-agent/releases/download/v1.3.1/Anki-Agent-1.3.1-macOS-arm64-preview.dmg) or read the [release notes](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1).
+## Which search option should I use?
 
-Double-click the `.dmg`, drag **Anki Agent** onto **Applications**, then open **Anki Agent** from Applications.
+| Option | Example request | What it does |
+| --- | --- | --- |
+| Keyword search — both AI options off | `sucralfate` | Matches words and tags locally, without an AI call. |
+| AI assist | “Find cards about drugs that protect gastric ulcers.” | Explores deck tags and tries keywords, then returns cards matching the search it builds. |
+| Deep search | “Gastric ulcer treatments that protect the mucosa rather than suppress acid.” | Finds possible matches, screens short card excerpts for relevance, and gives a reason for each card kept. |
 
-The preview has not been notarized by Apple. If macOS blocks it because the developer cannot be verified, follow the guide's [first-open instructions](docs/MAC_SETUP.md#if-macos-blocks-the-first-open).
+Deep search uses more AI calls and may take longer. It asks you to narrow searches with more than 120 candidates and reviews at most 400 candidates per search. It does not scan every full card in the deck. [Read the search guide](docs/SEARCH.md) for the steps, examples, and how to interpret results.
 
-### 2. Complete the setup screen
+## Choose an AI model
 
-1. Click **Create a Groq API key**, sign in, create a key, and copy it.
-2. Return to Anki Agent, paste it into **Connect Groq**, and click **Test key**.
-3. Under **Choose your Anki profile**, select the profile containing your cards.
-4. Under **Pick the deck you want to study**, choose your deck. Choosing a parent deck includes its subdecks.
-5. Click **Save & open deck**. Leave the window open while it says **Preparing your deck…**; the tutor opens when it is ready.
+| Connected service | Models shown |
+| --- | --- |
+| Groq | GPT-OSS 120B; Qwen 3.8 27B |
+| OpenRouter | GPT-6 Luna; Gemini 3.8 Flash; Gemini 3.5 Flash Lite |
+| Both | All of the above, grouped by service |
 
-For help choosing the correct download, finding your deck, or fixing a setup error, use the **[full Mac setup guide](docs/MAC_SETUP.md)**.
+Groq provides fast inference. OpenRouter offers additional models through one account. **GPT-6 Luna** is the lowest-cost OpenRouter choice listed here. See [OpenRouter setup and model costs](docs/OPENROUTER.md) for details. Usage follows your own account's limits and charges.
 
-## Use the app
+## Your cards and data
 
-- **Search:** find cards by keyword or tag. Turn on **AI assist** or use **Deep search** for a natural-language search.
-- **Tutor:** ask a question, watch the answer appear, and click its citations to inspect the source cards. Tutor only reads your deck.
-- **Tutor preferences:** use **Text size** in the Tutor toolbar to resize the conversation. Open its **Settings** button (or **Settings → Tutor settings…** on Mac) to edit the system prompt and optional first-reply instructions. Save to apply them to your next message, or restore the defaults. Text size is remembered on this device.
-- **Organize:** ask it to change your deck, e.g. "move my cardiology cards to my Cardiology deck" or "in my GI deck, suspend everything except GERD". The tab checks its Anki connection when opened; if unavailable, follow the AnkiConnect setup instructions and click **Check again**. Click **Review** under its reply to see every affected card (with images) and confirm. Every change can be undone.
-- **Move search results:** click **Move to deck…** above any search results to move those cards, with the same preview and undo. Moving and suspending require Anki to be open with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on.
-- **Thinking:** expand this panel to see model-returned reasoning and deck-search activity when available.
-- **Change your key or deck:** click **Setup**, or choose **Settings → API key & Anki deck…** in the Mac menu bar.
+Search and Tutor read your deck without changing it. Organize changes cards only after you confirm a preview, through AnkiConnect. AI requests send your question, conversation context, and relevant card text to the service for your selected model; OpenRouter forwards requests to its model providers. Check answers against the cited cards and your course materials.
 
-Your Anki collection is only changed when you confirm a move or suspend, and Anki itself makes the change through AnkiConnect. Your key is saved as plain text in an app-managed **.env** file in `~/Library/Application Support/Anki Agent/`, with access restricted to your Mac account. AI requests send your questions and relevant card text to **Groq**. Check AI answers against your cards; they can make mistakes.
+API keys are saved in a local `.env` file in `~/Library/Application Support/Anki Agent/`, restricted to your Mac account. They are stored separately from the app and retained when you update it.
 
-## Other instructions
+## Project information
 
+- [Contributors](CONTRIBUTORS.md)
+- [Mac setup and troubleshooting](docs/MAC_SETUP.md)
+- [Search options and examples](docs/SEARCH.md)
+- [OpenRouter setup and model costs](docs/OPENROUTER.md)
 - [Changelog](CHANGELOG.md)
-- [Mac setup, updates, and troubleshooting](docs/MAC_SETUP.md)
-- [Run or develop the source code](docs/DEVELOPMENT.md)
+- [Report a problem](https://github.com/ajy25/anki-agent/issues)
+- [Development instructions](docs/DEVELOPMENT.md)
 - [Automated checks and releases](docs/CI_CD.md)
-- [Maintain the GitHub Pages website](docs/WEBSITE.md)
-- [Build and publish Mac downloads — for maintainers](packaging/README.md)
+- [Mac packaging](packaging/README.md)
+- [Website maintenance](docs/WEBSITE.md)

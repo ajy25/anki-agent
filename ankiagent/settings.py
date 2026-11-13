@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 from dotenv import dotenv_values, set_key
+from .providers import PROVIDERS, desktop_provider
 
 
 def data_dir() -> Path:
@@ -27,18 +28,25 @@ class EnvCredentials:
     def __init__(self, root: Path):
         self.path = root / ".env"
 
-    def get(self) -> str:
+    def get(self, provider: str = "groq") -> str:
+        key_env = PROVIDERS[desktop_provider(provider)]["key_env"]
         try:
             if not self.path.exists():
                 return ""
             # Treat the saved key literally, without expanding environment vars.
-            return dotenv_values(self.path, interpolate=False).get("GROQ_API_KEY") or ""
+            return dotenv_values(self.path, interpolate=False).get(key_env) or ""
         except (OSError, UnicodeError):
             raise RuntimeError("Could not read the saved API key. Open Setup and save your key again.") from None
 
-    def set(self, key: str) -> None:
-        if not key or any(char.isspace() or char == "\x00" for char in key):
+    def set(self, key: str, provider: str = "groq") -> None:
+        self.set_many({desktop_provider(provider): key})
+
+    def set_many(self, keys: dict[str, str]) -> None:
+        entries = {PROVIDERS[desktop_provider(p)]["key_env"]: key for p, key in keys.items()}
+        if any(not key or any(char.isspace() or char == "\x00" for char in key) for key in entries.values()):
             raise ValueError("Enter an API key without spaces or line breaks.")
+        if not entries:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd, temporary = tempfile.mkstemp(prefix="credentials-", suffix=".tmp", dir=self.path.parent)
         try:
@@ -46,7 +54,8 @@ class EnvCredentials:
                 if self.path.exists():
                     stream.write(self.path.read_text())
             # Preserve unrelated entries/comments if the user edited this file.
-            set_key(temporary, "GROQ_API_KEY", key, quote_mode="always")
+            for key_env, key in entries.items():
+                set_key(temporary, key_env, key, quote_mode="always")
             os.chmod(temporary, 0o600)
             os.replace(temporary, self.path)
         except (OSError, UnicodeError):
@@ -61,11 +70,12 @@ class SettingsStore:
         self.path = self.root / "settings.json"
         self.vault = vault if vault is not None else EnvCredentials(self.root)
 
-    def get_key(self) -> str:
-        saved = self.vault.get()
+    def get_key(self, provider: str | None = None) -> str:
+        provider = desktop_provider(provider or self.read().get("provider"))
+        saved = self.vault.get() if provider == "groq" else self.vault.get(provider)
         # Source launches can supply an initial key via the environment. Once
         # Setup has been saved, a missing file must not revive a stale env key.
-        return saved or (os.environ.get("GROQ_API_KEY", "") if not self.path.exists() else "")
+        return saved or (os.environ.get(PROVIDERS[provider]["key_env"], "") if not self.path.exists() else "")
 
     def read(self) -> dict:
         if not self.path.exists():
@@ -76,16 +86,23 @@ class SettingsStore:
         except (OSError, ValueError):
             return {}
 
-    def save(self, config: dict, key: str = "") -> None:
+    def save(self, config: dict, key: str = "", *, keys: dict[str, str] | None = None) -> None:
+        provider = desktop_provider(config.get("provider"))
         # Explicit allowlist: credentials never belong in this JSON file.
         config = {name: config.get(name, "") for name in ("deck_path", "deck_name", "enable_hotkey")}
+        config["provider"] = provider
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd, temporary = tempfile.mkstemp(prefix="settings-", suffix=".json", dir=self.root)
         try:
             with os.fdopen(fd, "w") as stream:
                 json.dump(config, stream, indent=2)
-            if key:
-                self.vault.set(key)
+            if keys:
+                self.vault.set_many(keys)
+            elif key:
+                if provider == "groq":
+                    self.vault.set(key)
+                else:
+                    self.vault.set(key, provider)
             os.replace(temporary, self.path)
         finally:
             Path(temporary).unlink(missing_ok=True)

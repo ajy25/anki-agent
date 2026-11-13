@@ -12,7 +12,7 @@ The independent **Website checks** job also tests public download selection, bui
 
 Open **[Actions → CI](https://github.com/ajy25/anki-agent/actions/workflows/ci.yml)** to inspect a run. Failed tests prevent the packaging job from running. A packaging or verification failure fails CI; it does not produce a release.
 
-The checks need no Groq key, Anki profile, or signing credentials. Model calls are mocked and sample collections are generated in temporary folders. Python 3.12 and Node 24 are selected explicitly; Mac dependencies are pinned in `packaging/requirements-macos.txt`. The optional source-only OpenAI provider is outside this packaged Groq test environment.
+The checks need no Groq or OpenRouter key, Anki profile, or signing credentials. Model calls are mocked and sample collections are generated in temporary folders. Python 3.12 and Node 24 are selected explicitly; Mac dependencies are pinned in `packaging/requirements-macos.txt`. Both Groq and OpenRouter clients are included in the package. OpenRouter tests exercise the real SDK with mock HTTP/SSE responses; the package smoke test also constructs its client without making a network request.
 
 Older CI runs on the same branch or pull request are canceled when a newer run starts. Jobs have time limits and cache downloaded Python packages. The workflows run on GitHub-hosted machines, not a developer's Mac.
 
@@ -24,15 +24,15 @@ Workflow artifacts require GitHub access and expire. Share a published **Release
 
 ## Prepare a release
 
-`VERSION` in the repository root is the single source for the app's version, installer filename, and release validation. It contains a number such as `1.3.1`. The PyInstaller spec and build script both read it.
+`VERSION` in the repository root is the single source for the app's version, installer filename, and release validation. It contains a number such as `1.4.0`. The PyInstaller spec and build script both read it.
 
 1. Finish the changes on `main`, set `VERSION` to the intended release number, add an entry at the top of `CHANGELOG.md`, and update `packaging/RELEASE_NOTES.md` with the changes and macOS version actually tested. Update download-availability wording in the README and Mac setup guide as appropriate for publication.
 2. Commit and push those changes. Confirm that **CI** is green for that commit.
-3. Create and push a matching version tag on that commit. For example, if `VERSION` is `1.3.2`:
+3. Create and push a matching version tag on that commit. For example, if `VERSION` is `1.4.0`:
 
    ```sh
-   git tag -a v1.3.2 -m "Anki Agent 1.3.2"
-   git push origin v1.3.2
+   git tag -a v1.4.0 -m "Anki Agent 1.4.0"
+   git push origin v1.4.0
    ```
 
 4. **[Mac release draft](https://github.com/ajy25/anki-agent/actions/workflows/release.yml)** checks that the tag matches `VERSION`, reruns the same tests and package build at that tag, and downloads the resulting artifacts. Before attaching them, it checks their version, architecture, source commit, smoke-test results, byte sizes, and SHA-256 checksums again.
@@ -57,10 +57,10 @@ On an Apple silicon Mac, create a Python 3.12 environment, install `packaging/re
 ```sh
 python -m pip check
 python packaging/release_checks.py
-python -m unittest discover -s tests -v
+DECK_PATH=/unused/collection.anki2 python -m unittest discover -s tests -v
 node --check ankiagent/static/app.js
 node --check ankiagent/static/setup.js
-node --test tests/test_tutor_ui.cjs
+node --test tests/test_*_ui.cjs
 python packaging/build_macos.py --output-dir /tmp/anki-agent-ci-dist
 python packaging/release_checks.py --artifacts /tmp/anki-agent-ci-dist
 ```

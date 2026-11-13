@@ -1,6 +1,17 @@
 const $ = (id) => document.getElementById(id);
 const token = document.querySelector('meta[name="setup-token"]').content;
-let selectedPath = "", hasKey = false, loadingDeck = 0, waitingForDeck = false, polling = null;
+const providerNames = ["groq", "openrouter"];
+let providers = {}, savedKeys = {}, keyTestRequests = {groq: 0, openrouter: 0};
+let selectedPath = "", loadingDeck = 0, waitingForDeck = false, polling = null;
+
+function updateKeyFields() {
+  for (const provider of providerNames) {
+    const input = $(`${provider}-key`);
+    const info = providers[provider];
+    input.placeholder = savedKeys[provider] ? "Key saved. Leave blank to keep it." : `Optional — paste your ${info.prefix}… key`;
+    if (!input.value) fieldStatus(`${provider}-status`, savedKeys[provider] ? `${info.label} key saved.` : "");
+  }
+}
 
 async function api(path, body) {
   const response = await fetch(`/api/setup/${path}`, {
@@ -59,11 +70,13 @@ function fillProfiles(data) {
 async function checkState(initial = false) {
   try {
     const data = await api("state");
-    hasKey = data.has_key;
+    providers = data.providers;
+    savedKeys = data.saved_keys;
     if (initial) {
+      updateKeyFields();
       fillProfiles(data);
       $("enable-hotkey").checked = data.config.enable_hotkey === true;
-      if (hasKey) $("api-key").placeholder = "A key is configured. Leave blank to keep it.";
+
     }
     if (data.status === "indexing") {
       $("setup-fields").disabled = true;
@@ -80,18 +93,32 @@ async function checkState(initial = false) {
     }
   } catch (error) { $("setup-fields").disabled = false; status(error.message, true); }
 }
-$("show-key").addEventListener("click", () => {
-  const showing = $("api-key").type === "password";
-  $("api-key").type = showing ? "text" : "password";
-  $("show-key").textContent = showing ? "Hide" : "Show";
-  $("show-key").setAttribute("aria-label", showing ? "Hide API key" : "Show API key");
-});
-$("test-key").addEventListener("click", async () => {
-  $("test-key").disabled = true; fieldStatus("key-status", "Checking your key with Groq…");
-  try { await api("test-key", {key: $("api-key").value.trim()}); fieldStatus("key-status", "Connected. Your key was accepted by Groq."); }
-  catch (error) { fieldStatus("key-status", error.message, true); }
-  finally { $("test-key").disabled = false; }
-});
+for (const provider of providerNames) {
+  $(`${provider}-show`).addEventListener("click", () => {
+    const input = $(`${provider}-key`), showing = input.type === "password";
+    input.type = showing ? "text" : "password";
+    $(`${provider}-show`).textContent = showing ? "Hide" : "Show";
+    $(`${provider}-show`).setAttribute("aria-label", `${showing ? "Hide" : "Show"} ${providers[provider].label} API key`);
+  });
+  $(`${provider}-key`).addEventListener("input", () => {
+    ++keyTestRequests[provider];
+    fieldStatus(`${provider}-status`, "");
+    $(`${provider}-test`).disabled = false;
+  });
+  $(`${provider}-test`).addEventListener("click", async () => {
+    const request = ++keyTestRequests[provider], label = providers[provider].label;
+    $(`${provider}-test`).disabled = true;
+    fieldStatus(`${provider}-status`, `Checking your key with ${label}…`);
+    try {
+      await api("test-key", {key: $(`${provider}-key`).value.trim(), provider});
+      if (request === keyTestRequests[provider]) fieldStatus(`${provider}-status`, `Connected. Your key was accepted by ${label}.`);
+    } catch (error) {
+      if (request === keyTestRequests[provider]) fieldStatus(`${provider}-status`, error.message, true);
+    } finally {
+      if (request === keyTestRequests[provider]) $(`${provider}-test`).disabled = false;
+    }
+  });
+}
 $("profile").addEventListener("change", () => {
   if ($("profile").value) chooseCollection($("profile").value);
   else {
@@ -110,11 +137,15 @@ window.addEventListener("pywebviewready", nativeReady); nativeReady();
 $("setup-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!selectedPath || $("deck").disabled) { status("Choose a readable Anki collection first.", true); return; }
-  if (!hasKey && !$("api-key").value.trim()) { status("Add your Groq API key first.", true); $("api-key").focus(); return; }
+  const keys = Object.fromEntries(providerNames.map(p => [p, $(`${p}-key`).value.trim()]));
+  if (!providerNames.some(p => keys[p] || savedKeys[p])) {
+    status("Add at least one API key: Groq or OpenRouter.", true); return;
+  }
   $("setup-fields").disabled = true; status("Saving your settings…");
   try {
-    await api("save", {path: selectedPath, deck: $("deck").value, key: $("api-key").value.trim(), enable_hotkey: $("enable-hotkey").checked});
-    $("api-key").value = ""; waitingForDeck = true; checkState();
+    await api("save", {keys, path: selectedPath, deck: $("deck").value, enable_hotkey: $("enable-hotkey").checked});
+    providerNames.forEach(p => { $(`${p}-key`).value = ""; ++keyTestRequests[p]; });
+    waitingForDeck = true; checkState();
   } catch (error) { $("setup-fields").disabled = false; status(error.message, true); }
 });
 checkState(true);

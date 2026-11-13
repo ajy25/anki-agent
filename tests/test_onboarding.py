@@ -22,8 +22,10 @@ from ankiagent.settings import EnvCredentials, SettingsStore, discover_profiles
 
 class Vault:
     def __init__(self, key=""): self.key = key
-    def get(self): return self.key
-    def set(self, key): self.key = key
+    def get(self, provider="groq"): return self.key if provider == "groq" else ""
+    def set(self, key, provider="groq"): self.key = key
+    def set_many(self, keys):
+        if "groq" in keys: self.key = keys["groq"]
 
 
 class OnboardingTests(unittest.TestCase):
@@ -45,7 +47,7 @@ class OnboardingTests(unittest.TestCase):
         self.backend.add_url_rule("/", view_func=lambda: "Your deck is ready")
         self.factory = Mock(return_value=self.backend)
         self.manager = DesktopManager(self.store, self.factory)
-        application, self.setup = create_desktop_app(self.manager, key_validator=lambda key: None)
+        application, self.setup = create_desktop_app(self.manager, key_validator=lambda key, provider: None)
         self.client = Client(application, Response)
         self.headers = {"X-AnkiAgent-Setup-Token": self.manager.token}
 
@@ -196,7 +198,7 @@ class OnboardingTests(unittest.TestCase):
     def test_setup_uses_real_env_file_without_returning_or_serving_it(self):
         store = SettingsStore(self.root / "local-settings")
         manager = DesktopManager(store, self.factory)
-        application, _ = create_desktop_app(manager, key_validator=lambda key: None)
+        application, _ = create_desktop_app(manager, key_validator=lambda key, provider: None)
         client = Client(application, Response)
         headers = {"X-AnkiAgent-Setup-Token": manager.token}
         with patch.object(manager, "prepare"):

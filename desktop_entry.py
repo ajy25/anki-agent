@@ -12,6 +12,10 @@ def smoke_test(report: Path):
     from ankiagent.desktop import DesktopManager, create_desktop_app
     from ankiagent.settings import SettingsStore
     import ankiagent
+    import openai
+    from ankiagent.llm_client import OPENROUTER_BASE_URL
+    with openai.OpenAI(api_key="sk-or-smoke-not-real", base_url=OPENROUTER_BASE_URL) as client:
+        assert str(client.base_url).startswith(OPENROUTER_BASE_URL)
     import importlib.util
     assert importlib.util.find_spec("webview.platforms.cocoa") is not None
     root = Path(ankiagent.__file__).parent
@@ -54,11 +58,29 @@ def smoke_test(report: Path):
             result = client.get("/api/stats", base_url="http://127.0.0.1")
             assert result.get_json()["notes"] == expected, result.data
             result.close()
+        # Both provider keys and the reloaded model catalog must also work in
+        # the frozen app. Synthetic keys only; no inference/network request.
+        store.vault.set("sk-or-smoke-not-real", "openrouter")
+        manager.config["provider"] = "openrouter"
+        store.save(manager.config)
+        manager._prepare()
+        assert manager.status == "ready", manager.message
+        page = client.get("/", base_url="http://127.0.0.1")
+        assert b'openai/gpt-6-luna' in page.data
+        assert b'google/gemini-3.8-flash' in page.data
+        assert b'openai/gpt-oss-120b' in page.data
+        assert b'<optgroup label="OpenRouter">' in page.data
+        assert b'google/gemini-2.5-flash-lite' not in page.data
+        page.close()
+        manager.config["provider"] = "groq"
+        store.save(manager.config)
+        manager._prepare()
+        assert manager.status == "ready", manager.message
         assert collection.read_bytes() == original, "Source collection was modified"
         page = client.get("/", base_url="http://127.0.0.1")
         assert b"setup-settings" in page.data
         page.close()
-    report.write_text(json.dumps({"ok": True, "architecture": __import__("platform").machine(), "setup": True, "native_webview_module": True, "headless": True, "indexing": True, "deck_switching": True, "source_read_only": True}))
+    report.write_text(json.dumps({"ok": True, "architecture": __import__("platform").machine(), "setup": True, "native_webview_module": True, "headless": True, "indexing": True, "deck_switching": True, "source_read_only": True, "openrouter": True}))
 
 
 if __name__ == "__main__":
