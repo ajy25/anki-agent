@@ -41,7 +41,7 @@ Deep search uses more AI calls and may take longer. It asks you to narrow search
 
 ## Models and pricing
 
-We recommend **GPT-6 Luna on OpenRouter** or **GPT-OSS 120B on Groq** for low-cost everyday studying. Luna has the lowest listed token prices; GPT-OSS 120B combines low prices with Groq’s fast inference. Both are defaults for their respective services.
+We recommend **GPT-6 Luna on OpenRouter** or **GPT-OSS 120B on Groq** for low-cost everyday studying. Luna has the lowest listed token prices; GPT-OSS 120B combines low prices with Groq’s fast inference. Both offer fast, streaming replies for quick back-and-forth studying and are defaults for their respective services.
 
 Anki Agent is free, and the recommended models can cost fractions of a cent for modest requests. For example, **10,000 input tokens plus 1,000 output tokens in total** cost about **$0.0015 (0.15¢) with Luna** or **$0.0021 (0.21¢) with GPT-OSS 120B**. These are illustrative token totals, not measured costs per question.
 
@@ -50,10 +50,10 @@ Anki Agent is free, and the recommended models can cost fractions of a cent for 
 | [GPT-6 Luna](https://openrouter.ai/openai/gpt-6-luna) **Recommended** | OpenRouter | $0.10 | $0.50 |
 | [GPT-OSS 120B](https://console.groq.com/docs/model/openai/gpt-oss-120b) **Recommended** | Groq | $0.15 | $0.60 |
 | [Qwen 3.8 27B](https://console.groq.com/docs/model/qwen/qwen3.8-27b) | Groq | $0.80 | $4.00 |
-| [Gemini 3.8 Flash](https://openrouter.ai/google/gemini-3.8-flash) | OpenRouter | $0.75 | $3.75 |
+| [Gemini 3.8 Flash](https://openrouter.ai/google/gemini-3.8-flash) | OpenRouter | $1.50 | $7.50 |
 | [Gemini 3.5 Flash Lite](https://openrouter.ai/google/gemini-3.5-flash-lite) | OpenRouter | $0.30 | $2.50 |
 
-Prices are USD per **1 million tokens**, checked **November 13, 2026**, from the linked providers’ model pages. Input is text sent to the model; output includes generated answers and billable reasoning. The table uses uncached text rates for standard service. Gemini 3.8 Flash currently has a 50% promotion ($1.50/$7.50 before the discount); routing, long-context rates, fees, and future price changes can affect your bill.
+Prices are USD per **1 million tokens**, checked **November 13, 2026**, from the linked providers’ model pages. Input is text sent to the model; output includes generated answers and billable reasoning. The table uses standard list prices for uncached text. Routing, long-context rates, fees, and future price changes can affect your bill.
 
 One study question can make several model calls. Longer chats, retries, and Deep search increase usage. Keyword search makes no AI calls. Check your provider dashboard for actual charges and set a spending limit that suits you.
 
