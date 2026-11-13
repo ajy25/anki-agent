@@ -48,6 +48,8 @@ For each service you want to use:
 3. Paste it into the matching field. Groq keys start with `gsk_`; OpenRouter keys start with `sk-or-`.
 4. Click **Test Groq key** or **Test OpenRouter key**. Look for the message confirming that the service accepted it.
 
+Keys are specific to each service: a Groq key or a direct OpenAI key cannot be used in the OpenRouter field.
+
 A successful test checks the key. Generating answers also requires available usage allowance or credits in that account. Check the service's limits and billing settings before using it. OpenRouter does not require separate OpenAI or Google keys.
 
 Click **Save & open deck** after choosing your cards to save the keys. Testing alone does not save them. On later visits, a **Key saved** message means you can leave that field blank to keep the key. **Show** reveals only a key you have just typed, not a saved key.
@@ -71,7 +73,7 @@ Choose the collection file rather than `collection.media`, a backup, or an expor
 
 ## 5. Ask your first question
 
-Use the **AI model** dropdown at the top of the app. It shows only the services for which you have saved keys. With both keys saved, models are grouped under **Groq** and **OpenRouter**; choosing a model selects its service automatically.
+Use the **AI model** dropdown at the top of the app. It shows only the services for which you have saved keys. With both keys saved, models are grouped under **Groq** and **OpenRouter**; choosing a model selects its service automatically. The selected model is used for Tutor, AI assist, Deep search, and Organize. You can switch models without reopening Setup.
 
 Try a question your deck covers, for example:
 
@@ -112,19 +114,19 @@ Quit Anki Agent, download the new `.dmg`, and drag the app into Applications. Ch
 | --- | --- |
 | A service's models are missing | Open Setup, add or test that service's key, and click **Save & open deck**. Wait for the app to reopen. |
 | The key is rejected | Use a key from the correct service. Copy it again without spaces or quotation marks, or create a replacement. |
-| Key test works but answers fail | Check your internet connection, account credits or usage limits, and whether the selected model is available. Try another model. |
+| Key test works but answers fail | Check your internet connection, account credits or spending limits, model availability, and any account restrictions on providers. Try another model. |
 | Wrong cards or an empty deck list | Check Anki's active profile and synced cards, then select the matching profile and deck in Setup. |
 | Collection cannot be read | Finish syncing and quit Anki, then choose `collection.anki2` again. |
 | Card images are missing | Let Anki finish syncing media. Keep `collection.media` beside `collection.anki2`, then restart Anki Agent. |
 | Setup stays on “Preparing your deck…” | Large collections take longer. If it fails or never finishes, quit and reopen the app, then report the exact message if it repeats. |
-| App closes after saving Setup | Update to 1.3.1 or later; that version fixed the earlier shortcut-related crash. Report any remaining crash. |
+| App closes after saving Setup | Install the current release. Report any remaining crash. |
 
 [Report a problem](https://github.com/ajy25/anki-agent/issues) with your app version, macOS version, and the exact error or steps. Remove keys and personal details from screenshots. If asked for logs, open Finder → **Go → Go to Folder…** and enter `~/Library/Application Support/Anki Agent/logs` to find `desktop.log`.
 
 ## Where your data goes
 
 - Your Anki collection stays on your Mac. Search and Tutor read it; Organize makes only the changes you confirm through AnkiConnect.
-- Questions, conversation context, and relevant card text are sent to the service for the model you select. OpenRouter routes these requests to its model providers.
+- Questions, conversation context, and relevant card text are sent to the service for the model you select. OpenRouter routes these requests to its model providers. Your account’s routing and data policies apply; Anki Agent does not enforce zero data retention.
 - Keys are stored as plain text in `~/Library/Application Support/Anki Agent/.env`, with access restricted to your Mac account. Keep this file private. The app does not use Keychain.
 - Settings, the search index, and logs are stored in the same Anki Agent folder.
 

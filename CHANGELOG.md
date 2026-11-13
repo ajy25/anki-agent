@@ -24,7 +24,7 @@ Changes since 1.3.1:
 - The model dropdown is visible in the desktop app. The native AI model menu focuses that dropdown.
 - Setup and study documentation now follows medical-student workflows, with provider setup, model costs, search explanations, and troubleshooting.
 - Built-in examples use generic deck topics. Names and tags from your own deck still appear normally.
-- The website keeps its simple demo/download layout and adds release status, both providers, a combined model pricing table, low-cost recommendations, search guidance, and contributor credits.
+- The website keeps its simple demo/download layout and adds release status, both providers, a combined model pricing table, low-cost recommendations, and search guidance.
 
 ### Fixed
 

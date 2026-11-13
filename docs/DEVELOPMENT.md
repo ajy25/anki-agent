@@ -44,7 +44,7 @@ Edit `.env` with your own values:
 | --- | --- |
 | `LLM_PROVIDER` | `groq` (default) or `openrouter`. The source browser app also supports `openai`. |
 | `OPENROUTER_API_KEY` | Your [OpenRouter key](https://openrouter.ai/settings/keys), required only for `openrouter`. |
-| `LLM_MODEL` | Optional override; omit to use the provider default. See [OpenRouter models](OPENROUTER.md). |
+| `LLM_MODEL` | Optional override; omit to use the provider default. See [available models](../README.md#models-and-pricing). |
 | `GROQ_API_KEY` | Your Groq API key from [the Groq console](https://console.groq.com/keys). |
 | `DECK_PATH` | The local `collection.anki2` path. On a typical Mac: `~/Library/Application Support/Anki2/User 1/collection.anki2`. Replace `User 1` with the actual profile name. |
 | `DECK_NAME` | Exact deck name from Anki; use `::` between parent and child names. Leave blank to include the entire collection. |
@@ -61,7 +61,7 @@ Never commit `.env`, API keys, collections, or personal logs. See [`.env.example
 
 ## OpenRouter compatibility
 
-Set `LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY` for the source browser app. Remove a Groq-specific `LLM_MODEL`, or set a listed OpenRouter model ID. Desktop users save one or both keys in Setup; the model picker includes models from all connected services. See [models and setup](OPENROUTER.md).
+Set `LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY` for the source browser app. Remove a Groq-specific `LLM_MODEL`, or set a listed OpenRouter model ID. Desktop users save one or both keys in Setup; the model picker includes models from all connected services. See [app setup](MAC_SETUP.md).
 
 The OpenAI-compatible client targets `https://openrouter.ai/api/v1`; it never uses `OPENAI_API_KEY` for OpenRouter. Key testing uses authenticated `GET /key` because `/models` is public. Client routing and request options are selected from each request’s model, without changing the process provider for concurrent requests. All AI paths use the same request adapter, which translates token limits and omits unsupported temperature settings for GPT-6 Luna. Reasoning is requested at low effort. The tool loop preserves OpenRouter `reasoning_details` and Gemini tool signatures between rounds, while showing only readable model-returned text in Thinking. Some models return no readable reasoning.
 

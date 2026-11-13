@@ -41,7 +41,6 @@ li { margin: 10px 0; }
 details { margin-top: 18px; font-size: 14px; }
 summary { cursor: pointer; color: #205cc5; width: fit-content; }
 details p { margin: 10px 0; }
-.credits { flex-basis: 100%; margin: 0; color: #606a79; }
 @media (max-width: 600px) {
   .download-status { display: block; margin: 8px 0 0; }
 }

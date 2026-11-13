@@ -49,4 +49,4 @@ The **search plan** shows the keywords and tags used. Expand **Thinking** to see
 
 Both AI options use the model selected at the top of the app, within the collection chosen in Setup. Selecting a deck in the Search sidebar limits the final results to that deck and its subdecks. Questions, relevant deck text, and tag information may be sent to the service for the selected model; keyword search stays local.
 
-For setup and model choices, see the [Mac guide](MAC_SETUP.md) and [OpenRouter guide](OPENROUTER.md).
+For setup and model choices, see the [Anki Agent setup guide](MAC_SETUP.md) and [model pricing table](../README.md#models-and-pricing).

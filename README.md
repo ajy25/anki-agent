@@ -57,7 +57,7 @@ Prices are USD per **1 million tokens**, checked **November 13, 2026**, from the
 
 One study question can make several model calls. Longer chats, retries, and Deep search increase usage. Keyword search makes no AI calls. Check your provider dashboard for actual charges and set a spending limit that suits you.
 
-Connect either service or both. The model dropdown shows only the models available through your saved keys. [Mac setup](docs/MAC_SETUP.md) · [OpenRouter setup](docs/OPENROUTER.md).
+Connect either service or both. The model dropdown shows only the models available through your saved keys. [Set up Anki Agent](docs/MAC_SETUP.md).
 
 ## Your cards and data
 
@@ -70,7 +70,7 @@ API keys are saved in a local `.env` file in `~/Library/Application Support/Anki
 - [Contributors](CONTRIBUTORS.md)
 - [Mac setup and troubleshooting](docs/MAC_SETUP.md)
 - [Search options and examples](docs/SEARCH.md)
-- [OpenRouter setup and model costs](docs/OPENROUTER.md)
+- [Model comparison and pricing](#models-and-pricing)
 - [Changelog](CHANGELOG.md)
 - [Report a problem](https://github.com/ajy25/anki-agent/issues)
 - [Development instructions](docs/DEVELOPMENT.md)
