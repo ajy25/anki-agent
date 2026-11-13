@@ -25,7 +25,7 @@ If macOS blocks the app or your deck is missing, follow the [Mac setup guide](do
 - **Search:** use keywords when you know a term. **AI assist** turns a description into a keyword-and-tag search. **Deep search** adds an AI review of short excerpts from the cards it finds, keeping those judged relevant. [See how the search options work](docs/SEARCH.md).
 - **Tutor:** ask a question about your cards, then ask follow-up questions in the same conversation. Replies appear as they are generated. Click a citation such as **[1]** to inspect the supporting card.
 - **Thinking:** expand this panel to see search activity and any reasoning text returned by the model. Availability varies by model.
-- **Organize:** request a change such as “move my cardiology cards to my Cardiology deck.” Review the affected cards and confirm before anything changes. Moves and suspend/unsuspend actions require Anki to be open with [AnkiConnect](https://ankiweb.net/shared/info/2055492159) installed. Changes can be undone.
+- **Organize (experimental):** request a change such as “move my cardiology cards to my Cardiology deck.” Review the affected cards and confirm before anything changes. Moves and suspend/unsuspend actions require Anki to be open with [AnkiConnect](https://ankiweb.net/shared/info/2055492159) installed. Changes can be undone.
 - **Clear chat:** use **Clear chat** in Tutor or Organize. Tutor settings also let you clear chat history when the app closes or opens.
 - **Adjust your experience:** change text size or tutor instructions in Tutor settings. Return to **Setup** to add or replace a key or choose another deck. Leave a saved key's field blank to keep it.
 
@@ -39,15 +39,25 @@ If macOS blocks the app or your deck is missing, follow the [Mac setup guide](do
 
 Deep search uses more AI calls and may take longer. It asks you to narrow searches with more than 120 candidates and reviews at most 400 candidates per search. It does not scan every full card in the deck. [Read the search guide](docs/SEARCH.md) for the steps, examples, and how to interpret results.
 
-## Choose an AI model
+## Models and pricing
 
-| Connected service | Models shown |
-| --- | --- |
-| Groq | GPT-OSS 120B; Qwen 3.8 27B |
-| OpenRouter | GPT-6 Luna; Gemini 3.8 Flash; Gemini 3.5 Flash Lite |
-| Both | All of the above, grouped by service |
+We recommend **GPT-6 Luna on OpenRouter** or **GPT-OSS 120B on Groq** for low-cost everyday studying. Luna has the lowest listed token prices; GPT-OSS 120B combines low prices with Groq’s fast inference. Both are defaults for their respective services.
 
-Groq provides fast inference. OpenRouter offers additional models through one account. **GPT-6 Luna** is the lowest-cost OpenRouter choice listed here. See [OpenRouter setup and model costs](docs/OPENROUTER.md) for details. Usage follows your own account's limits and charges.
+Anki Agent is free, and the recommended models can cost fractions of a cent for modest requests. For example, **10,000 input tokens plus 1,000 output tokens in total** cost about **$0.0015 (0.15¢) with Luna** or **$0.0021 (0.21¢) with GPT-OSS 120B**. These are illustrative token totals, not measured costs per question.
+
+| Model | Service | Input / 1M tokens | Output / 1M tokens |
+| --- | --- | ---: | ---: |
+| [GPT-6 Luna](https://openrouter.ai/openai/gpt-6-luna) **Recommended** | OpenRouter | $0.10 | $0.50 |
+| [GPT-OSS 120B](https://console.groq.com/docs/model/openai/gpt-oss-120b) **Recommended** | Groq | $0.15 | $0.60 |
+| [Qwen 3.8 27B](https://console.groq.com/docs/model/qwen/qwen3.8-27b) | Groq | $0.80 | $4.00 |
+| [Gemini 3.8 Flash](https://openrouter.ai/google/gemini-3.8-flash) | OpenRouter | $0.75 | $3.75 |
+| [Gemini 3.5 Flash Lite](https://openrouter.ai/google/gemini-3.5-flash-lite) | OpenRouter | $0.30 | $2.50 |
+
+Prices are USD per **1 million tokens**, checked **November 13, 2026**, from the linked providers’ model pages. Input is text sent to the model; output includes generated answers and billable reasoning. The table uses uncached text rates for standard service. Gemini 3.8 Flash currently has a 50% promotion ($1.50/$7.50 before the discount); routing, long-context rates, fees, and future price changes can affect your bill.
+
+One study question can make several model calls. Longer chats, retries, and Deep search increase usage. Keyword search makes no AI calls. Check your provider dashboard for actual charges and set a spending limit that suits you.
+
+Connect either service or both. The model dropdown shows only the models available through your saved keys. [Mac setup](docs/MAC_SETUP.md) · [OpenRouter setup](docs/OPENROUTER.md).
 
 ## Your cards and data
 

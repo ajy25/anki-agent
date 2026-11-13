@@ -18,15 +18,7 @@ OpenRouter and the two-key setup are included in [Anki Agent 1.4.0](https://gith
 
 The **AI model** menu automatically includes the OpenRouter models once its key is saved. If you also save a Groq key, the same menu shows both services in separate groups. Switch models there without returning to Setup. The selected model is used for Tutor, AI assist, Deep search, and Organize. Plain keyword search does not use an AI service.
 
-| Model | Input per million tokens | Output per million tokens | Starting point |
-| --- | ---: | ---: | --- |
-| [GPT-6 Luna](https://openrouter.ai/openai/gpt-6-luna) | $0.10 | $0.50 | Lowest listed rates; default when only OpenRouter is connected. |
-| [Gemini 3.8 Flash](https://openrouter.ai/google/gemini-3.8-flash) | $0.825 | $4.125 | Newest tool-capable Gemini Flash in the checked catalog. |
-| [Gemini 3.5 Flash Lite](https://openrouter.ai/google/gemini-3.5-flash-lite) | $0.30 | $2.50 | A less expensive Gemini option. |
-
-Prices are USD from OpenRouter's [model catalog](https://openrouter.ai/api/v1/models), checked November 13, 2026. Follow the model links for current pricing. GPT-6 Luna has higher rates for very long contexts, and Gemini 3.8 Flash's model page may show promotional rates that differ from the catalog.
-
-**What counts toward cost?** A token is a small piece of text. Input includes your question, conversation history, instructions, and retrieved cards. Output includes the answer and billable reasoning. One question may use several calls to find and read cards, so these are not fixed prices per question. View actual charges and credits in the [OpenRouter platform](https://openrouter.ai/).
+We recommend **GPT-6 Luna** as a low-cost starting point on OpenRouter, or **GPT-OSS 120B** if you prefer Groq. See the [combined model pricing table](../README.md#models-and-pricing) for all five models, cost examples, and usage details.
 
 ## What to expect
 

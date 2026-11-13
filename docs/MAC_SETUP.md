@@ -1,6 +1,6 @@
 # Set up Anki Agent on your Mac
 
-[Project home](../README.md) · [OpenRouter models and costs](OPENROUTER.md)
+[Project home](../README.md) · [Models and pricing](../README.md#models-and-pricing)
 
 ## 1. Sync your Anki deck
 
@@ -79,7 +79,7 @@ Try a question your deck covers, for example:
 
 Watch the answer appear, then click a citation to read the supporting card. Ask a follow-up question in the same chat. **Thinking** shows deck-search activity and any reasoning text the model provides.
 
-For OpenRouter, **GPT-6 Luna** is a low-cost starting point. [Compare the models and costs](OPENROUTER.md).
+We recommend **GPT-6 Luna on OpenRouter** or **GPT-OSS 120B on Groq** for low-cost everyday studying. [Compare all models and costs](../README.md#models-and-pricing).
 
 ## Find cards with Search
 
@@ -100,7 +100,7 @@ Expand **How do the search options differ?** below the search box for a reminder
 - **Start a new conversation:** click **Clear chat**. Tutor settings include the option to clear history when the app closes or opens.
 - **After syncing new cards:** quit Anki Agent with **Command-Q** and reopen it to refresh the index.
 - **Optional shortcut:** enable **Control + Option + Space** in Setup to show or hide the app. The clear-history preference controls whether reopening starts a fresh conversation.
-- **Organize cards:** install [AnkiConnect](https://ankiweb.net/shared/info/2055492159), keep Anki open, and review every proposed change before confirming. Search and Tutor work without AnkiConnect.
+- **Organize cards (experimental):** install [AnkiConnect](https://ankiweb.net/shared/info/2055492159), keep Anki open, and review every proposed change before confirming. Search and Tutor work without AnkiConnect.
 
 ## Update the app
 

@@ -10,7 +10,7 @@ Changes since 1.3.1:
 
 - **OpenRouter:** GPT-6 Luna, Gemini 3.8 Flash, and Gemini 3.5 Flash Lite, alongside the existing Groq models. Streaming, card citations, and search work with either service.
 - **One or both API keys:** separate Groq and OpenRouter fields in Setup, with individual key tests. The model menu groups the choices available through your saved keys and routes each request to the selected model's service.
-- **Organize:** move, suspend, or unsuspend cards through AnkiConnect. Review the affected cards and their images before confirming, and use Recent changes to undo an action.
+- **Organize (experimental):** move, suspend, or unsuspend cards through AnkiConnect. Review the affected cards and their images before confirming, and use Recent changes to undo an action.
 - **Move search results:** move the current result set to another deck with a preview and undo.
 - **Tutor settings:** adjustable text size, editable system and first-reply instructions, and a restore-defaults option.
 - **Chat history preference:** choose whether closing or reopening the app clears conversations; the global shortcut respects this preference.
@@ -24,7 +24,7 @@ Changes since 1.3.1:
 - The model dropdown is visible in the desktop app. The native AI model menu focuses that dropdown.
 - Setup and study documentation now follows medical-student workflows, with provider setup, model costs, search explanations, and troubleshooting.
 - Built-in examples use generic deck topics. Names and tags from your own deck still appear normally.
-- The website keeps its simple demo/download layout and adds release status, provider choices, search guidance, and contributor credits.
+- The website keeps its simple demo/download layout and adds release status, both providers, a combined model pricing table, low-cost recommendations, search guidance, and contributor credits.
 
 ### Fixed
 

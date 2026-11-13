@@ -5,11 +5,13 @@ Download the **.dmg**, open it, and drag **Anki Agent** into **Applications**. O
 ## What’s new
 
 - OpenRouter models: **GPT-6 Luna**, **Gemini 3.8 Flash**, and **Gemini 3.5 Flash Lite**. The model dropdown includes choices from whichever services you connect.
-- Organize cards with preview, confirmation, and undo through AnkiConnect, including moving an entire search result set.
+- **Experimental Organize:** manage cards with preview, confirmation, and undo through AnkiConnect, including moving an entire search result set.
 - Tutor text size and instruction settings, reliable Clear chat, and an option to clear chat history when the app closes or opens.
 - Clearer AI assist and Deep search explanations in the app and documentation.
 - Keys saved in a local, account-restricted `.env` file, without Keychain prompts.
 - Fixes for failed tutor tool calls and protections that bind Organize actions to the active profile and reviewed cards.
+
+For low-cost everyday studying, start with **GPT-6 Luna on OpenRouter** or **GPT-OSS 120B on Groq**. [Compare all model prices](https://github.com/ajy25/anki-agent#models-and-pricing).
 
 ## Updating from 1.3.1
 

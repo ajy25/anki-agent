@@ -27,7 +27,7 @@ GROQ_MODELS = {
 }
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# Tool-capable catalog entries checked 2026-11-13. Prices live in docs/OPENROUTER.md.
+# Tool-capable catalog entries checked 2026-11-13. Prices live in README.md.
 OPENROUTER_MODELS = {
     "openai/gpt-6-luna": "GPT-6 Luna",
     "google/gemini-3.8-flash": "Gemini 3.8 Flash",

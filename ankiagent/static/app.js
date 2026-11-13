@@ -40,8 +40,9 @@ const CHAT_UI = {
   agent: {
     title: "Organize", endpoint: "/api/agent",
     placeholder: "Describe what to change, e.g. “move my cardiology cards to my Cardiology deck”  (Enter to send)",
-    emptyTitle: "Organize your Anki deck",
-    emptySub: `Move, suspend, or unsuspend cards, e.g.
+    emptyTitle: "Organize your Anki deck (experimental)",
+    emptySub: `Organize is experimental. Review every proposed change carefully.
+          Move, suspend, or unsuspend cards, e.g.
           “move my cardiology cards to my Cardiology deck” or “in my GI deck,
           suspend everything except GERD”. You'll see every card in a preview
           and confirm before anything changes, and you can undo.
