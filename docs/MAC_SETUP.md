@@ -17,7 +17,7 @@ Anki Agent reads the collection on your Mac. Cards that are only on AnkiWeb or y
 
 The download supports Macs with Apple silicon. Check ** → About This Mac** for an Apple M-series chip.
 
-**Current public download:** [Anki Agent 1.3.1](https://github.com/ajy25/anki-agent/releases/download/v1.3.1/Anki-Agent-1.3.1-macOS-arm64-preview.dmg). This download supports Groq only. The two-key setup described below is part of the upcoming **1.4.0**, available in the current source and updated local builds. On 1.3.1, enter your key under **Connect Groq**.
+**Current public download:** [Anki Agent 1.4.0](https://github.com/ajy25/anki-agent/releases/download/v1.4.0/Anki-Agent-1.4.0-macOS-arm64-preview.dmg). Connect Groq, OpenRouter, or both using the setup steps below.
 
 ### If macOS blocks the first open
 

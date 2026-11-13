@@ -16,7 +16,7 @@ You need **Anki on your Mac**, a synced deck, an internet connection, and an API
 4. **Save & open deck.** Leave the window open while the app prepares your cards.
 5. **Choose a model and ask a question.** The **AI model** menu shows models from the services you have connected. With both keys saved, you can switch between Groq and OpenRouter directly in this menu.
 
-**Download status:** the published [1.3.1 installer](https://github.com/ajy25/anki-agent/releases/download/v1.3.1/Anki-Agent-1.3.1-macOS-arm64-preview.dmg) supports Groq. The upcoming **1.4.0** includes the two-key setup and features described here. It is available in the current source and updated local builds, ahead of the next public download.
+**Download:** [Anki Agent 1.4.0 for Mac](https://github.com/ajy25/anki-agent/releases/download/v1.4.0/Anki-Agent-1.4.0-macOS-arm64-preview.dmg). This preview includes Groq and OpenRouter, the two-key setup, and the features described below.
 
 If macOS blocks the app or your deck is missing, follow the [Mac setup guide](docs/MAC_SETUP.md).
 

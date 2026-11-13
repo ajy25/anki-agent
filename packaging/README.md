@@ -2,15 +2,15 @@
 
 This page is for maintainers. People installing the app should use the **[Mac setup guide](../docs/MAC_SETUP.md)**.
 
-Version **1.4.0** is prepared in the source for the next preview. The published **1.3.1** assets remain Groq-only until the next release is published.
+Version **1.4.0** is the current public Mac preview, with Groq and OpenRouter support.
 
 ## Current handoff
 
-- **Next version:** 1.4.0, with OpenRouter, Organize, chat controls, and clearer search guidance.
-- **Public download:** [Mac installer (.dmg)](https://github.com/ajy25/anki-agent/releases/download/v1.3.1/Anki-Agent-1.3.1-macOS-arm64-preview.dmg), with ZIP and verification manifest on the [release page](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1). These assets were built and verified by the tagged release workflow.
+- **Current version:** 1.4.0, with OpenRouter, Organize, chat controls, and clearer search guidance.
+- **Public download:** [Mac installer (.dmg)](https://github.com/ajy25/anki-agent/releases/download/v1.4.0/Anki-Agent-1.4.0-macOS-arm64-preview.dmg), with ZIP and verification manifest on the [release page](https://github.com/ajy25/anki-agent/releases/tag/v1.4.0). These assets were built and verified by the tagged release workflow.
 - **Architecture:** Apple silicon (`arm64`).
 - **Signing:** the preview has an ad-hoc signature and is not notarized by Apple.
-- **Publication:** version 1.3.1 is published as a public pre-release. Future tags prepare a release draft after the checks pass; publish that draft to make its downloads public.
+- **Publication:** version 1.4.0 is published as a public pre-release. Future tags prepare a release draft after the checks pass; publish that draft to make its downloads public.
 
 **The preview can be shared as a GitHub Release asset.** An Apple Developer membership is not required to upload or share it. Recipients may need the per-app **Open Anyway** steps in the setup guide. Developer ID signing and notarization improve first-open behavior; they are an optional distribution improvement, not a condition for sharing the preview.
 
@@ -19,7 +19,7 @@ Version **1.4.0** is prepared in the source for the next preview. The published 
 **Automated path:** follow [Prepare a release](../docs/CI_CD.md#prepare-a-release). A version tag matching the root `VERSION` file runs tests, builds and verifies the installer, then attaches it to a draft pre-release. Review and publish the draft when ready. The steps below also describe how to attach a locally built preview manually.
 
 1. Test both Groq and OpenRouter setup, Groq-only, OpenRouter-only, and both-key model menus, model selection, and a streamed answer with a card citation. Test the installer on a separate Mac or clean user account, using the [user setup guide](../docs/MAC_SETUP.md). Check the first-open prompts, key entry and testing, profile/deck selection, saving Setup, asking a question, quitting, and reopening with saved settings. Record the actual macOS version and chip tested. Automated package checks do not replace this first-run check.
-2. Open the repository's **[Releases page](https://github.com/ajy25/anki-agent/releases)** and choose **Draft a new release**. Choose the source revision used to build the app and a matching version tag. For a new version, use a preview title matching `VERSION` and mark it as a **pre-release**. The existing 1.3.1 release is already published.
+2. Open the repository's **[Releases page](https://github.com/ajy25/anki-agent/releases)** and choose **Draft a new release**. Choose the source revision used to build the app and a matching version tag. For a new version, use a preview title matching `VERSION` and mark it as a **pre-release**. Use a new version for each future release.
 3. Attach these files from `dist/` to the release's assets:
 
    ```text

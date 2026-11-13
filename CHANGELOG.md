@@ -2,9 +2,9 @@
 
 User-visible changes are recorded here, newest version first.
 
-## 1.4.0 — Upcoming preview
+## [1.4.0 (preview)](https://github.com/ajy25/anki-agent/releases/tag/v1.4.0) — 2026-11-13
 
-Prepared for the next release; not yet published. Changes since 1.3.1:
+Changes since 1.3.1:
 
 ### Added
 
@@ -37,7 +37,7 @@ Prepared for the next release; not yet published. Changes since 1.3.1:
 
 - From the Keychain-based 1.3.1 preview, paste your Groq key into Setup once if prompted. You can also add an OpenRouter key. Existing local `.env` keys are retained.
 - The Mac preview remains for Apple silicon and is not notarized by Apple. See the [Mac setup guide](docs/MAC_SETUP.md) for installation.
-- The published download remains 1.3.1 until the 1.4.0 release is published.
+- Download the [1.4.0 Mac installer](https://github.com/ajy25/anki-agent/releases/download/v1.4.0/Anki-Agent-1.4.0-macOS-arm64-preview.dmg).
 
 ## [1.3.1 (preview)](https://github.com/ajy25/anki-agent/releases/tag/v1.3.1) — 2026-11-07
 

@@ -12,7 +12,7 @@ OpenRouter gives you access to several AI models through one account. You can us
 
 OpenRouter keys start with `sk-or-`. A Groq key or direct OpenAI key does not work in this field. Testing confirms the key is accepted; answers also require available credits and model access.
 
-The published 1.3.1 download supports Groq only. OpenRouter and the two-key setup are part of the upcoming **1.4.0**, available in the current source and updated local builds.
+OpenRouter and the two-key setup are included in [Anki Agent 1.4.0](https://github.com/ajy25/anki-agent/releases/tag/v1.4.0). If you are using 1.3.1, update the app first.
 
 ## Choose a model
 
