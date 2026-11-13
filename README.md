@@ -65,6 +65,10 @@ Search and Tutor read your deck without changing it. Organize changes cards only
 
 API keys are saved in a local `.env` file in `~/Library/Application Support/Anki Agent/`, restricted to your Mac account. They are stored separately from the app and retained when you update it.
 
+## Development acknowledgements
+
+Developed with assistance from **Codex** and **Claude Code**. See [Contributors](CONTRIBUTORS.md) for the project contributors.
+
 ## Project information
 
 - [Contributors](CONTRIBUTORS.md)
